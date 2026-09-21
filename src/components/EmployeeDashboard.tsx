@@ -38,6 +38,7 @@ import {
 } from '../utils/time';
 import { calculateDistanceMeters, getDeviceLocation } from '../utils/geo';
 import { DigitalClock } from './DigitalClock';
+import { MapLocationPicker } from './MapLocationPicker';
 
 interface EmployeeDashboardProps {
   employee: Employee;
@@ -67,6 +68,7 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
   const [activeTab, setActiveTab] = useState<'attendance' | 'leaves' | 'new_leave' | 'new_excuse'>('attendance');
   const [simulatedAtHq, setSimulatedAtHq] = useState<boolean>(true); // Convenient for browser testing
   const [checkingGps, setCheckingGps] = useState<boolean>(false);
+  const [showHqMap, setShowHqMap] = useState<boolean>(false);
   const [gpsModal, setGpsModal] = useState<{
     isOpen: boolean;
     type: 'check_in' | 'check_out';
@@ -377,8 +379,16 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
               نطاق تسجيل الحضور: <strong>{settings.gpsRadiusMeters} متر</strong> من {settings.orgLocation.address}
             </span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500 font-medium">وضع تحديد الموقع:</span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setShowHqMap(true)}
+              className="px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+              <span>عرض موقع المقر على الخريطة</span>
+            </button>
+            <span className="text-slate-500 font-medium hidden sm:inline">وضع تحديد الموقع:</span>
             <button
               type="button"
               onClick={() => setSimulatedAtHq(!simulatedAtHq)}
@@ -1078,6 +1088,19 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
             )}
           </div>
         </div>
+      )}
+
+      {/* HQ Map View Modal for Employee */}
+      {showHqMap && (
+        <MapLocationPicker
+          initialLat={settings.orgLocation.lat}
+          initialLng={settings.orgLocation.lng}
+          initialRadius={settings.gpsRadiusMeters}
+          initialAddress={settings.orgLocation.address}
+          autoLocateOnOpen={false}
+          onSave={() => setShowHqMap(false)}
+          onClose={() => setShowHqMap(false)}
+        />
       )}
     </div>
   );

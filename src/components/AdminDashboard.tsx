@@ -96,6 +96,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Modals
   const [showMapPicker, setShowMapPicker] = useState<boolean>(false);
+  const [autoLocateMap, setAutoLocateMap] = useState<boolean>(false);
   const [printModal, setPrintModal] = useState<{
     isOpen: boolean;
     type: 'attendance' | 'leaves';
@@ -601,24 +602,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                onClick={() => handleDetectCurrentLocation(true)}
-                disabled={isDetectingLocation}
-                className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
-                title="تحديث موقع المؤسسة فوراً حسب مكان تواجدك الحالي"
+                id="open-map-and-locate-overview-btn"
+                onClick={() => {
+                  setAutoLocateMap(true);
+                  setShowMapPicker(true);
+                }}
+                className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+                title="فتح الخريطة وتحديد موقع تواجد المقر تلقائياً حسب مكانك الحالي"
               >
-                <LocateFixed className={`w-4 h-4 ${isDetectingLocation ? 'animate-spin' : ''}`} />
-                <span>
-                  {isDetectingLocation ? 'جاري التحديد...' : 'تحديد الموقع تلقائياً من مكاني الحالي'}
-                </span>
+                <LocateFixed className="w-4 h-4 text-amber-300 animate-pulse" />
+                <span>فتح الخريطة وتحديد موقع المقر</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => setShowMapPicker(true)}
+                onClick={() => {
+                  setAutoLocateMap(false);
+                  setShowMapPicker(true);
+                }}
                 className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold transition-colors flex items-center gap-2 cursor-pointer"
               >
                 <MapPin className="w-4 h-4 text-emerald-600" />
-                <span>عرض الخريطة</span>
+                <span>عرض موقع المقر الحالي</span>
               </button>
 
               <button
@@ -1743,28 +1748,44 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
-                {/* Auto Detect Admin Location Button */}
+                {/* Open Map & Auto-Locate Button */}
+                <button
+                  type="button"
+                  id="detect-and-open-map-btn"
+                  onClick={() => {
+                    setAutoLocateMap(true);
+                    setShowMapPicker(true);
+                  }}
+                  className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+                  title="فتح الخريطة وتحديد موقع المقر الفعلي مباشرة"
+                >
+                  <LocateFixed className="w-4 h-4 text-amber-300 animate-pulse" />
+                  <span>فتح الخريطة وتحديد الموقع</span>
+                </button>
+
+                {/* Instant GPS Detection without map */}
                 <button
                   type="button"
                   id="detect-admin-location-btn"
                   onClick={() => handleDetectCurrentLocation(true)}
                   disabled={isDetectingLocation}
-                  className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
-                  title="التقاط إحداثيات موقعك الحالي عبر GPS وتعيينه فوراً كنطاق لحضور الموظفين"
+                  className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  title="تحديث الإحداثيات فوراً بدون فتح الخريطة"
                 >
-                  <LocateFixed className={`w-4 h-4 ${isDetectingLocation ? 'animate-spin' : ''}`} />
-                  <span>
-                    {isDetectingLocation ? 'جاري التقاط موقعك...' : 'تحديد الموقع تلقائياً من موقعي الحالي'}
-                  </span>
+                  <Navigation className={`w-3.5 h-3.5 text-emerald-600 ${isDetectingLocation ? 'animate-spin' : ''}`} />
+                  <span>{isDetectingLocation ? 'جاري الالتقاط...' : 'تحديث صامت'}</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => setShowMapPicker(true)}
+                  onClick={() => {
+                    setAutoLocateMap(false);
+                    setShowMapPicker(true);
+                  }}
                   className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold border border-slate-200 transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
                   <MapPin className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>فتح الخريطة</span>
+                  <span>استعراض الخريطة</span>
                 </button>
               </div>
             </div>
@@ -2054,6 +2075,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           initialLng={tempSettings.orgLocation.lng}
           initialRadius={tempSettings.gpsRadiusMeters}
           initialAddress={tempSettings.orgLocation.address}
+          autoLocateOnOpen={autoLocateMap}
           onSave={(loc) => {
             const updated = {
               ...tempSettings,
@@ -2063,16 +2085,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 address: loc.address,
               },
               gpsRadiusMeters: loc.radius,
+              lastLocationSync: `${formatDateNumeric(new Date())} ${getCurrentTime12h(new Date())}`,
             };
             setTempSettings(updated);
             onUpdateSettings(updated);
             onLogActivity(
-              'تحديث موقع المؤسسة الجغرافي',
-              `تم تعيين إحداثيات المقر الجديد ونصف القطر إلى ${loc.radius} متر`
+              'تحديث وتثبيت موقع المقر على الخريطة',
+              `تم تعيين إحداثيات المقر الجديد ونصف القطر إلى ${loc.radius} متر (${loc.address})`
             );
             setShowMapPicker(false);
+            setAutoLocateMap(false);
           }}
-          onClose={() => setShowMapPicker(false)}
+          onClose={() => {
+            setShowMapPicker(false);
+            setAutoLocateMap(false);
+          }}
         />
       )}
 
