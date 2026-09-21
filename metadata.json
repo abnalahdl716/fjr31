@@ -1,0 +1,6 @@
+{
+  "name": "مؤسسة الفجر الخيرية الاجتماعية - نظام الحضور والإجازات",
+  "description": "نظام إدارة حضور الموظفين وإجازاتهم لمؤسسة الفجر الخيرية الاجتماعية مع التحقق من الموقع عبر GPS وتتبع التأخير والتقارير",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
