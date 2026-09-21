@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Public read and write for the attendance and system entities
+    // Allows seamless operations both when anonymous or authenticated
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   UserSession,
   SystemSettings,
@@ -10,7 +10,8 @@ import {
   ActivityLogEntry,
 } from './types';
 import { Storage } from './utils/storage';
-import { getCurrentTime12h, formatDateNumeric, formatDateIso } from './utils/time';
+import { CloudStorage } from './services/cloudStorage';
+import { getCurrentTime12h, formatDateNumeric } from './utils/time';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
 import { LoginView } from './components/LoginView';
@@ -18,7 +19,7 @@ import { EmployeeDashboard } from './components/EmployeeDashboard';
 import { AdminDashboard } from './components/AdminDashboard';
 
 export default function App() {
-  // Global Application State loaded from localStorage
+  // Global Application State (defaults from local/cache for instantaneous render)
   const [settings, setSettings] = useState<SystemSettings>(() => Storage.getSettings());
   const [employees, setEmployees] = useState<Employee[]>(() => Storage.getEmployees());
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>(() =>
@@ -37,39 +38,150 @@ export default function App() {
     Storage.getActivityLogs()
   );
   const [session, setSession] = useState<UserSession | null>(() => Storage.getSession());
+  const [isCloudConnected, setIsCloudConnected] = useState<boolean>(true);
 
-  // Save changes to localStorage whenever state updates
+  // Flags to prevent echo loops when remote updates arrive
+  const isRemoteUpdate = useRef<{ [key: string]: boolean }>({});
+
+  // ----------------------------------------------------
+  // 1. Subscribe to Cloud Firestore Realtime Updates
+  // ----------------------------------------------------
+  useEffect(() => {
+    // Settings subscription
+    const unsubSettings = CloudStorage.subscribeSettings((remoteSettings) => {
+      if (remoteSettings && remoteSettings.orgName) {
+        isRemoteUpdate.current['settings'] = true;
+        setSettings(remoteSettings);
+        Storage.saveSettings(remoteSettings);
+      }
+    });
+
+    // Employees subscription
+    const unsubEmployees = CloudStorage.subscribeEmployees((remoteEmployees) => {
+      isRemoteUpdate.current['employees'] = true;
+      setEmployees(remoteEmployees);
+      Storage.saveEmployees(remoteEmployees);
+    });
+
+    // Attendance subscription
+    const unsubAttendance = CloudStorage.subscribeAttendance((remoteAttendance) => {
+      isRemoteUpdate.current['attendance'] = true;
+      setAttendanceRecords(remoteAttendance);
+      Storage.saveAttendance(remoteAttendance);
+    });
+
+    // Leaves subscription
+    const unsubLeaves = CloudStorage.subscribeLeaves((remoteLeaves) => {
+      isRemoteUpdate.current['leaves'] = true;
+      setLeaveRequests(remoteLeaves);
+      Storage.saveLeaveRequests(remoteLeaves);
+    });
+
+    // Excuses subscription
+    const unsubExcuses = CloudStorage.subscribeExcuses((remoteExcuses) => {
+      isRemoteUpdate.current['excuses'] = true;
+      setExcuseRequests(remoteExcuses);
+      Storage.saveExcuseRequests(remoteExcuses);
+    });
+
+    // Rules subscription
+    const unsubRules = CloudStorage.subscribeRules((remoteRules) => {
+      if (remoteRules && remoteRules.length > 0) {
+        isRemoteUpdate.current['rules'] = true;
+        setLeaveRules(remoteRules);
+        Storage.saveLeaveRules(remoteRules);
+      }
+    });
+
+    // Logs subscription
+    const unsubLogs = CloudStorage.subscribeLogs((remoteLogs) => {
+      isRemoteUpdate.current['logs'] = true;
+      setActivityLogs(remoteLogs);
+      Storage.saveActivityLogs(remoteLogs);
+    });
+
+    return () => {
+      unsubSettings();
+      unsubEmployees();
+      unsubAttendance();
+      unsubLeaves();
+      unsubExcuses();
+      unsubRules();
+      unsubLogs();
+    };
+  }, []);
+
+  // ----------------------------------------------------
+  // 2. Sync Local Modifications to Cloud Firestore & LocalStorage
+  // ----------------------------------------------------
   useEffect(() => {
     Storage.saveSettings(settings);
+    if (!isRemoteUpdate.current['settings']) {
+      CloudStorage.saveSettings(settings);
+    }
+    isRemoteUpdate.current['settings'] = false;
   }, [settings]);
 
   useEffect(() => {
     Storage.saveEmployees(employees);
+    if (!isRemoteUpdate.current['employees']) {
+      CloudStorage.saveEmployeesBulk(employees);
+    }
+    isRemoteUpdate.current['employees'] = false;
   }, [employees]);
 
   useEffect(() => {
     Storage.saveAttendance(attendanceRecords);
+    if (!isRemoteUpdate.current['attendance']) {
+      CloudStorage.saveAttendanceBulk(attendanceRecords);
+    }
+    isRemoteUpdate.current['attendance'] = false;
   }, [attendanceRecords]);
 
   useEffect(() => {
     Storage.saveLeaveRequests(leaveRequests);
+    if (!isRemoteUpdate.current['leaves']) {
+      CloudStorage.saveLeavesBulk(leaveRequests);
+    }
+    isRemoteUpdate.current['leaves'] = false;
   }, [leaveRequests]);
 
   useEffect(() => {
     Storage.saveExcuseRequests(excuseRequests);
+    if (!isRemoteUpdate.current['excuses']) {
+      CloudStorage.saveExcusesBulk(excuseRequests);
+    }
+    isRemoteUpdate.current['excuses'] = false;
   }, [excuseRequests]);
 
   useEffect(() => {
     Storage.saveLeaveRules(leaveRules);
+    if (!isRemoteUpdate.current['rules']) {
+      CloudStorage.saveLeaveRulesBulk(leaveRules);
+    }
+    isRemoteUpdate.current['rules'] = false;
   }, [leaveRules]);
 
   useEffect(() => {
     Storage.saveActivityLogs(activityLogs);
+    isRemoteUpdate.current['logs'] = false;
   }, [activityLogs]);
 
   useEffect(() => {
     Storage.saveSession(session);
   }, [session]);
+
+  // Online / Offline Detection
+  useEffect(() => {
+    const handleOnline = () => setIsCloudConnected(true);
+    const handleOffline = () => setIsCloudConnected(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Activity logger helper
   const handleLogActivity = (action: string, details: string) => {
@@ -83,6 +195,7 @@ export default function App() {
       details,
     };
     setActivityLogs((prev) => [newLog, ...prev]);
+    CloudStorage.saveLog(newLog).catch(console.error);
   };
 
   // Auth Handlers
@@ -104,7 +217,7 @@ export default function App() {
     setSession(null);
   };
 
-  // Switch account easily for fast testing
+  // Switch account easily
   const handleSwitchAccount = () => {
     handleLogout();
   };
@@ -123,6 +236,9 @@ export default function App() {
       return [newRecord, ...prev];
     });
 
+    // Save record to cloud directly
+    CloudStorage.saveAttendanceRecord(newRecord);
+
     handleLogActivity(
       newRecord.checkOutTime ? 'تسجيل انصراف موظف' : 'تسجيل حضور موظف',
       `قام الموظف ${newRecord.employeeName} بتسجيل ${newRecord.checkOutTime ? 'الانصراف' : 'الحضور'}`
@@ -138,6 +254,8 @@ export default function App() {
       status: 'pending',
     };
     setLeaveRequests((prev) => [newLeave, ...prev]);
+    CloudStorage.saveLeaveRequest(newLeave);
+
     handleLogActivity(
       'تقديم طلب إجازة',
       `قدم الموظف ${newLeave.employeeName} طلب إجازة (${newLeave.leaveType}) لعدد ${newLeave.daysCount} أيام`
@@ -153,6 +271,8 @@ export default function App() {
       status: 'pending',
     };
     setExcuseRequests((prev) => [newExcuse, ...prev]);
+    CloudStorage.saveExcuseRequest(newExcuse);
+
     handleLogActivity(
       'تقديم طلب عذر',
       `قدم الموظف ${newExcuse.employeeName} عذر (${newExcuse.type === 'late' ? 'تأخر في الحضور' : 'انصراف مبكر'})`
@@ -183,6 +303,7 @@ export default function App() {
         session={session}
         onLogout={handleLogout}
         onSwitchAccount={handleSwitchAccount}
+        isCloudConnected={isCloudConnected}
       />
 
       {/* Main Content Area */}
