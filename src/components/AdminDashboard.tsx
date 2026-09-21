@@ -27,6 +27,9 @@ import {
   Sliders,
   Check,
   ChevronDown,
+  Navigation,
+  LocateFixed,
+  Radio,
 } from 'lucide-react';
 import {
   Employee,
@@ -49,6 +52,7 @@ import {
 import { MapLocationPicker } from './MapLocationPicker';
 import { PrintReportModal } from './PrintReportModal';
 import { Storage } from '../utils/storage';
+import { getDeviceLocation } from '../utils/geo';
 
 interface AdminDashboardProps {
   settings: SystemSettings;
@@ -138,6 +142,55 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // System Settings state
   const [tempSettings, setTempSettings] = useState<SystemSettings>(settings);
   const [logoPreview, setLogoPreview] = useState<string>(settings.logoUrl);
+  const [isDetectingLocation, setIsDetectingLocation] = useState<boolean>(false);
+  const [locationSuccessMsg, setLocationSuccessMsg] = useState<string>('');
+  const [locationErrorMsg, setLocationErrorMsg] = useState<string>('');
+
+  // Keep tempSettings in sync if cloud settings update from remote
+  React.useEffect(() => {
+    setTempSettings(settings);
+    setLogoPreview(settings.logoUrl);
+  }, [settings]);
+
+  // Handler to fetch and update location automatically from current Admin device GPS
+  const handleDetectCurrentLocation = async (autoSave = false) => {
+    setIsDetectingLocation(true);
+    setLocationSuccessMsg('');
+    setLocationErrorMsg('');
+    try {
+      const loc = await getDeviceLocation();
+      const updated: SystemSettings = {
+        ...tempSettings,
+        orgLocation: {
+          lat: Number(loc.lat.toFixed(6)),
+          lng: Number(loc.lng.toFixed(6)),
+          address: `الموقع الحالي لمدير النظام (دقة ±${loc.accuracy}م)`,
+        },
+        lastLocationSync: `${formatDateNumeric(new Date())} ${getCurrentTime12h(new Date())}`,
+      };
+      setTempSettings(updated);
+      setLocationSuccessMsg(`تم التقاط موقعك الحالي بنجاح: خط عرض ${loc.lat.toFixed(4)}، خط طول ${loc.lng.toFixed(4)} (دقة ±${loc.accuracy}م)`);
+
+      if (autoSave) {
+        onUpdateSettings(updated);
+        onLogActivity(
+          'تحديث موقع النظام تلقائياً حسب تواجد المدير',
+          `تم تحديث إحداثيات موقع الحضور إلى موقع المدير الحالي (${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)})`
+        );
+      }
+    } catch (err: any) {
+      setLocationErrorMsg(err?.message || 'تعذر الوصول إلى نظام تحديد الموقع (GPS) في جهازك');
+    } finally {
+      setIsDetectingLocation(false);
+    }
+  };
+
+  // If autoFollowAdminLocation is enabled in settings, prompt/auto-refresh location on mount
+  React.useEffect(() => {
+    if (tempSettings.autoFollowAdminLocation && !tempSettings.lastLocationSync) {
+      handleDetectCurrentLocation(true).catch(() => {});
+    }
+  }, []);
 
   // Today stats calculation
   const todayIso = formatDateIso(new Date());
@@ -547,14 +600,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
             <div className="flex flex-wrap items-center gap-3">
               <button
+                type="button"
+                onClick={() => handleDetectCurrentLocation(true)}
+                disabled={isDetectingLocation}
+                className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                title="تحديث موقع المؤسسة فوراً حسب مكان تواجدك الحالي"
+              >
+                <LocateFixed className={`w-4 h-4 ${isDetectingLocation ? 'animate-spin' : ''}`} />
+                <span>
+                  {isDetectingLocation ? 'جاري التحديد...' : 'تحديد الموقع تلقائياً من مكاني الحالي'}
+                </span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setShowMapPicker(true)}
                 className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold transition-colors flex items-center gap-2 cursor-pointer"
               >
                 <MapPin className="w-4 h-4 text-emerald-600" />
-                <span>تعديل موقع المنظمة على الخريطة</span>
+                <span>عرض الخريطة</span>
               </button>
 
               <button
+                type="button"
                 onClick={() => setActiveTab('reports')}
                 className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-xs transition-colors flex items-center gap-2 cursor-pointer"
               >
@@ -1661,22 +1729,100 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
 
-          {/* 📍 إعدادات الموقع ونصف قطر الـ GPS */}
+          {/* 📍 إعدادات الموقع ونصف قطر الـ GPS والتحديد التلقائي */}
           <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <h4 className="font-bold text-base text-slate-800 flex items-center gap-2">
-                <span className="text-emerald-600 font-bold">📍</span>
-                <span>إعدادات موقع المؤسسة ونظام تحديد المواقع (GPS)</span>
-              </h4>
-              <button
-                type="button"
-                onClick={() => setShowMapPicker(true)}
-                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
-              >
-                <MapPin className="w-3.5 h-3.5" />
-                <span>فتح الخريطة التفاعلية لتحديد الموقع</span>
-              </button>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+              <div>
+                <h4 className="font-bold text-base text-slate-800 flex items-center gap-2">
+                  <span className="text-emerald-600 font-bold">📍</span>
+                  <span>إعدادات موقع المؤسسة ونظام تحديد المواقع (GPS)</span>
+                </h4>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  يمكن تحديد الموقع تلقائياً حسب تواجدك كمدير للنظام أو يدوياً عبر الخريطة
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Auto Detect Admin Location Button */}
+                <button
+                  type="button"
+                  id="detect-admin-location-btn"
+                  onClick={() => handleDetectCurrentLocation(true)}
+                  disabled={isDetectingLocation}
+                  className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  title="التقاط إحداثيات موقعك الحالي عبر GPS وتعيينه فوراً كنطاق لحضور الموظفين"
+                >
+                  <LocateFixed className={`w-4 h-4 ${isDetectingLocation ? 'animate-spin' : ''}`} />
+                  <span>
+                    {isDetectingLocation ? 'جاري التقاط موقعك...' : 'تحديد الموقع تلقائياً من موقعي الحالي'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowMapPicker(true)}
+                  className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold border border-slate-200 transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>فتح الخريطة</span>
+                </button>
+              </div>
             </div>
+
+            {/* Auto Follow Toggle Feature */}
+            <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="p-2 rounded-xl bg-emerald-600 text-white mt-0.5 shrink-0">
+                  <Radio className="w-4 h-4 animate-pulse" />
+                </div>
+                <div>
+                  <h5 className="text-xs sm:text-sm font-extrabold text-emerald-950 flex items-center gap-2">
+                    <span>التحديد التلقائي المستمر حسب تواجد مدير النظام</span>
+                    <span className="text-[10px] bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded-full font-bold">
+                      ميزة ذكية
+                    </span>
+                  </h5>
+                  <p className="text-xs text-emerald-800/80 leading-relaxed mt-0.5">
+                    عند تفعيل هذا الخيار، يتم تحديث موقع مقر الحضور تلقائياً بمجرد فتح مدير النظام للوحة التحكم ليتطابق مع مكان تواجده، وتعتمد السحابة موقعه كمقر رسمي لبصمة الموظفين.
+                  </p>
+                  {tempSettings.lastLocationSync && (
+                    <div className="text-[11px] font-bold text-emerald-700 mt-1 flex items-center gap-1">
+                      <span>✓ آخر تحديث للموقع من جهاز المدير:</span>
+                      <span className="font-mono-num">{tempSettings.lastLocationSync}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  checked={tempSettings.autoFollowAdminLocation ?? true}
+                  onChange={(e) =>
+                    setTempSettings({
+                      ...tempSettings,
+                      autoFollowAdminLocation: e.target.checked,
+                    })
+                  }
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+              </label>
+            </div>
+
+            {/* Notification messages for GPS */}
+            {locationSuccessMsg && (
+              <div className="p-3 bg-emerald-100/80 border border-emerald-300 text-emerald-900 rounded-xl text-xs font-bold flex items-center gap-2 animate-fadeIn">
+                <Check className="w-4 h-4 text-emerald-700 shrink-0" />
+                <span>{locationSuccessMsg}</span>
+              </div>
+            )}
+            {locationErrorMsg && (
+              <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-bold flex items-center gap-2 animate-fadeIn">
+                <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>{locationErrorMsg}</span>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>

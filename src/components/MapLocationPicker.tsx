@@ -167,10 +167,11 @@ export const MapLocationPicker: React.FC<MapLocationPickerProps> = ({
             type="button"
             onClick={handleGetCurrentLocation}
             disabled={locating}
-            className="absolute top-4 left-4 z-20 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-3 py-2 rounded-xl shadow-md flex items-center gap-2 text-xs font-bold transition-all cursor-pointer"
+            className="absolute top-4 left-4 z-20 bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 px-3.5 py-2 rounded-xl shadow-md flex items-center gap-2 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+            title="تحديد الموقع الجغرافي تلقائياً حسب تواجدك كمدير للنظام"
           >
             <Navigation className={`w-4 h-4 text-emerald-600 ${locating ? 'animate-spin' : ''}`} />
-            <span>{locating ? 'جاري التحديد...' : 'موقعي الحالي'}</span>
+            <span>{locating ? 'جاري التقاط موقعك...' : 'تحديد الموقع من مكاني الحالي'}</span>
           </button>
 
           {/* Map Info Bar */}

@@ -114,6 +114,8 @@ export interface SystemSettings {
     address: string;
   };
   gpsRadiusMeters: number; // e.g. 100 meters
+  autoFollowAdminLocation?: boolean; // هل يتم تحديث موقع المؤسسة تلقائياً حسب تواجد مدير النظام
+  lastLocationSync?: string; // وقت وتاريخ آخر مزامنة لموقع المدير
   adminUsername: string;
   adminPassword: string;
   developerName: string;

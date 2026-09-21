@@ -52,6 +52,8 @@ export const INITIAL_SETTINGS: SystemSettings = {
     address: 'المقر الرئيسي - شارع الزبيري، بجوار تقاطع حدة، صنعاء',
   },
   gpsRadiusMeters: 100, // 100 meters
+  autoFollowAdminLocation: true, // تفعيل التحديد التلقائي حسب تواجد مدير النظام
+  lastLocationSync: '',
   adminUsername: 'fjr',
   adminPassword: '316501',
   developerName: 'مطور الموقع / عبد المجيد عياش بارديني',
