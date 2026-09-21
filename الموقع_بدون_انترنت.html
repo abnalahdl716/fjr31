@@ -4,16 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>مؤسسة الفجر الخيرية الاجتماعية - نظام الحضور والإجازات</title>
-    <meta name="description" content="نظام إدارة حضور الموظفين وإجازاتهم لمؤسسة الفجر الخيرية الاجتماعية مع التحقق من الموقع عبر GPS وتتبع التأخير والتقارير" />
+    <meta name="description" content="نظام إدارة حضور الموظفين وإجازاتهم لمؤسسة الفجر الخيرية الاجتماعية مع التحقق من الموقع عبر GPS وتتبع التأخير والتقارير والتخزين السحابي" />
     <meta property="og:title" content="مؤسسة الفجر الخيرية الاجتماعية - نظام الحضور والإجازات" />
-    <meta property="og:description" content="نظام إدارة حضور الموظفين وإجازاتهم لمؤسسة الفجر الخيرية الاجتماعية مع التحقق من الموقع عبر GPS وتتبع التأخير والتقارير" />
+    <meta property="og:description" content="نظام إدارة حضور الموظفين وإجازاتهم لمؤسسة الفجر الخيرية الاجتماعية مع التحقق من الموقع عبر GPS وتتبع التأخير والتقارير والتخزين السحابي" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
 
-    <!-- توجيه تلقائي ذكي عند فتح الملف مباشرة عبر نظام الملفات بدون خادم -->
+    <!-- توجيه ذكي عند فتح الملف مباشرة عبر القرص -->
     <script>
       (function() {
         if (window.location.protocol === 'file:') {
+          // إذا كان متصلاً بالإنترنت، يمكن التوجيه إلى الرابط السحابي المباشر
           var p = window.location.pathname || '';
           if (!p.includes('الموقع_بدون_انترنت.html') && 
               !p.includes('تشغيل_الموقع_مباشرة.html') && 
@@ -325,33 +326,31 @@ React keys must be passed directly to JSX without using spread:
   </head>
   <body class="bg-gray-50 text-slate-800 antialiased font-['Cairo',sans-serif]">
     <div id="root">
-      <!-- شاشة إرشادية أنيقة تظهر فقط في حالة فتح ملف index.html المصدري مباشرة عبر القرص دون خادم محلي -->
-      <style>.fallback-container{color:#1e293b;direction:rtl;background:#f8fafc;justify-content:center;align-items:center;min-height:100vh;padding:24px;font-family:Cairo,system-ui,-apple-system,sans-serif;display:flex}.fallback-card{text-align:center;background:#fff;border:1px solid #e2e8f0;border-radius:24px;width:100%;max-width:600px;padding:36px 32px;box-shadow:0 10px 25px -5px #0000000d,0 8px 10px -6px #00000008}.fallback-badge{color:#065f46;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:9999px;margin-bottom:16px;padding:6px 16px;font-size:13px;font-weight:700;display:inline-block}.fallback-btn{background:#047857;border-radius:14px;justify-content:center;align-items:center;gap:8px;width:100%;margin-top:20px;padding:14px 24px;font-size:16px;font-weight:700;text-decoration:none;transition:all .2s;display:inline-flex;box-shadow:0 4px 12px #04785740;color:#fff!important}.fallback-btn:hover{background:#065f46;transform:translateY(-1px)}.fallback-btn-secondary{box-shadow:none;background:#f1f5f9;border:1px solid #cbd5e1;margin-top:10px;color:#334155!important}.fallback-btn-secondary:hover{background:#e2e8f0}</style>
+      <!-- شاشة إرشادية أنيقة توفر خيارات الفتح بالإنترنت أو الفتح المباشر -->
+      <style>.fallback-container{color:#1e293b;direction:rtl;background:#f8fafc;justify-content:center;align-items:center;min-height:100vh;padding:24px;font-family:Cairo,system-ui,-apple-system,sans-serif;display:flex}.fallback-card{text-align:center;background:#fff;border:1px solid #e2e8f0;border-radius:24px;width:100%;max-width:620px;padding:36px 32px;box-shadow:0 10px 25px -5px #0000000d,0 8px 10px -6px #00000008}.fallback-badge{color:#065f46;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:9999px;margin-bottom:16px;padding:6px 16px;font-size:13px;font-weight:700;display:inline-block}.fallback-btn{background:#0284c7;border-radius:14px;justify-content:center;align-items:center;gap:8px;width:100%;margin-top:16px;padding:14px 24px;font-size:16px;font-weight:700;text-decoration:none;transition:all .2s;display:inline-flex;box-shadow:0 4px 12px #0284c740;color:#fff!important}.fallback-btn:hover{background:#0369a1;transform:translateY(-1px)}.fallback-btn-green{background:#047857;margin-top:10px;box-shadow:0 4px 12px #04785740}.fallback-btn-green:hover{background:#065f46}</style>
       <div class="fallback-container">
         <div class="fallback-card">
           <div class="fallback-badge">مؤسسة الفجر الخيرية الاجتماعية</div>
           <h1 style="font-size: 22px; font-weight: 800; margin: 0 0 12px 0; color: #0f172a;">
-            نظام إدارة حضور الموظفين والإجازات
+            نظام إدارة حضور الموظفين والإجازات (السحابي)
           </h1>
-          <p style="font-size: 14px; line-height: 1.7; color: #475569; margin: 0 0 20px 0;">
-            لقد قمت بفتح ملف التطوير المصدري (<code style="background:#f1f5f9; padding:2px 6px; border-radius:6px; font-family:monospace; color:#0f172a;">index.html</code>) مباشرة من المجلد.
-            <br>
-            لتشغيل الموقع بكامل مميزاته ومحتوياته بدون إنترنت، يُرجى فتح النسخة الجاهزة المستقلة:
+          <p style="font-size: 14px; line-height: 1.7; color: #475569; margin: 0 0 16px 0;">
+            يمكنك تشغيل الموقع مباشرة عبر الإنترنت لربط الهواتف والأجهزة المختلفة بسحابة واحدة:
           </p>
 
-          <a href="الموقع_بدون_انترنت.html" class="fallback-btn">
-            <span>✨ تشغيل الموقع مباشرة الآن (الموقع بدون إنترنت)</span>
+          <a href="https://ais-pre-rsbkab7wqxy6xdm34ehwfg-423922568365.europe-west1.run.app" target="_blank" class="fallback-btn">
+            <span>🌐 فتح التطبيق مباشرة عبر الإنترنت (الرابط السحابي)</span>
           </a>
 
-          <a href="dist/index.html" class="fallback-btn fallback-btn-secondary">
-            <span>📂 فتح نسخة dist المدمجة</span>
+          <a href="الموقع_بدون_انترنت.html" class="fallback-btn fallback-btn-green">
+            <span>⚡ فتح النسخة المحلية على هذا الجهاز</span>
           </a>
 
           <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #f1f5f9; text-align: right;">
-            <p style="font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 6px;">طرق التشغيل المتاحة في مجلد المشروع:</p>
+            <p style="font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 6px;">طرق التشغيل المتاحة في المجلد:</p>
             <ul style="font-size: 12px; line-height: 1.8; color: #64748b; margin: 0; padding-right: 20px;">
-              <li><strong>التشغيل الفوري:</strong> انقر مرتين على ملف <code style="color:#047857;">الموقع_بدون_انترنت.html</code> أو <code style="color:#047857;">فتح_الموقع_مباشرة.bat</code>.</li>
-              <li><strong>التشغيل كخادم محلي:</strong> انقر مرتين على ملف <code style="color:#047857;">تشغيل_الموقع.bat</code>.</li>
+              <li><strong>التشغيل بالإنترنت:</strong> انقر مرتين على ملف <code style="color:#0284c7;">فتح_الموقع_عبر_الإنترنت.bat</code> أو اختصار <code style="color:#0284c7;">فتح_الموقع_عبر_الإنترنت.url</code>.</li>
+              <li><strong>مشاركة الرابط مع الموظفين:</strong> أرسل لهم الرابط السحابي لفتحه من هواتفهم.</li>
             </ul>
           </div>
         </div>
