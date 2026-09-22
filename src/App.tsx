@@ -1,359 +1,248 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  UserSession,
-  SystemSettings,
-  Employee,
-  AttendanceRecord,
-  LeaveRequest,
-  ExcuseRequest,
-  LeaveRuleConfig,
-  ActivityLogEntry,
-} from './types';
-import { Storage } from './utils/storage';
-import { CloudStorage } from './services/cloudStorage';
-import { getCurrentTime12h, formatDateNumeric } from './utils/time';
+import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
 import { LoginView } from './components/LoginView';
 import { EmployeeDashboard } from './components/EmployeeDashboard';
 import { AdminDashboard } from './components/AdminDashboard';
+import { MapLocationPicker } from './components/MapLocationPicker';
+import { PrintReportModal } from './components/PrintReportModal';
+import { Employee, AttendanceRecord, LeaveRequest, DocumentItem, InstitutionSettings } from './types';
+import {
+  getStoredEmployees,
+  saveEmployees,
+  getStoredAttendance,
+  saveAttendance,
+  getStoredLeaves,
+  saveLeaves,
+  getStoredDocuments,
+  saveDocuments,
+  getStoredSettings,
+  saveSettings,
+  getCurrentUser,
+  setCurrentUser
+} from './utils/storage';
 
-export default function App() {
-  // Global Application State (defaults from local/cache for instantaneous render)
-  const [settings, setSettings] = useState<SystemSettings>(() => Storage.getSettings());
-  const [employees, setEmployees] = useState<Employee[]>(() => Storage.getEmployees());
-  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>(() =>
-    Storage.getAttendance()
-  );
-  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(() =>
-    Storage.getLeaveRequests()
-  );
-  const [excuseRequests, setExcuseRequests] = useState<ExcuseRequest[]>(() =>
-    Storage.getExcuseRequests()
-  );
-  const [leaveRules, setLeaveRules] = useState<LeaveRuleConfig[]>(() =>
-    Storage.getLeaveRules()
-  );
-  const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>(() =>
-    Storage.getActivityLogs()
-  );
-  const [session, setSession] = useState<UserSession | null>(() => Storage.getSession());
-  const [isCloudConnected, setIsCloudConnected] = useState<boolean>(true);
+export function App() {
+  const [settings, setSettingsState] = useState<InstitutionSettings>(getStoredSettings);
+  const [employees, setEmployeesState] = useState<Employee[]>(getStoredEmployees);
+  const [attendance, setAttendanceState] = useState<AttendanceRecord[]>(getStoredAttendance);
+  const [leaves, setLeavesState] = useState<LeaveRequest[]>(getStoredLeaves);
+  const [documents, setDocumentsState] = useState<DocumentItem[]>(getStoredDocuments);
+  const [currentUser, setCurrentUserState] = useState<Employee | null>(getCurrentUser);
 
-  // Flags to prevent echo loops when remote updates arrive
-  const isRemoteUpdate = useRef<{ [key: string]: boolean }>({});
+  // Active Tab for employee navigation: 'attendance' | 'leaves' | 'documents' | 'profile'
+  const [activeTab, setActiveTab] = useState<'attendance' | 'leaves' | 'documents' | 'profile'>('attendance');
 
-  // ----------------------------------------------------
-  // 1. Subscribe to Cloud Firestore Realtime Updates
-  // ----------------------------------------------------
-  useEffect(() => {
-    // Settings subscription
-    const unsubSettings = CloudStorage.subscribeSettings((remoteSettings) => {
-      if (remoteSettings && remoteSettings.orgName) {
-        isRemoteUpdate.current['settings'] = true;
-        setSettings(remoteSettings);
-        Storage.saveSettings(remoteSettings);
-      }
-    });
+  // Modals
+  const [showMapPicker, setShowMapPicker] = useState<boolean>(false);
+  const [showPrintModal, setShowPrintModal] = useState<boolean>(false);
 
-    // Employees subscription
-    const unsubEmployees = CloudStorage.subscribeEmployees((remoteEmployees) => {
-      isRemoteUpdate.current['employees'] = true;
-      setEmployees(remoteEmployees);
-      Storage.saveEmployees(remoteEmployees);
-    });
-
-    // Attendance subscription
-    const unsubAttendance = CloudStorage.subscribeAttendance((remoteAttendance) => {
-      isRemoteUpdate.current['attendance'] = true;
-      setAttendanceRecords(remoteAttendance);
-      Storage.saveAttendance(remoteAttendance);
-    });
-
-    // Leaves subscription
-    const unsubLeaves = CloudStorage.subscribeLeaves((remoteLeaves) => {
-      isRemoteUpdate.current['leaves'] = true;
-      setLeaveRequests(remoteLeaves);
-      Storage.saveLeaveRequests(remoteLeaves);
-    });
-
-    // Excuses subscription
-    const unsubExcuses = CloudStorage.subscribeExcuses((remoteExcuses) => {
-      isRemoteUpdate.current['excuses'] = true;
-      setExcuseRequests(remoteExcuses);
-      Storage.saveExcuseRequests(remoteExcuses);
-    });
-
-    // Rules subscription
-    const unsubRules = CloudStorage.subscribeRules((remoteRules) => {
-      if (remoteRules && remoteRules.length > 0) {
-        isRemoteUpdate.current['rules'] = true;
-        setLeaveRules(remoteRules);
-        Storage.saveLeaveRules(remoteRules);
-      }
-    });
-
-    // Logs subscription
-    const unsubLogs = CloudStorage.subscribeLogs((remoteLogs) => {
-      isRemoteUpdate.current['logs'] = true;
-      setActivityLogs(remoteLogs);
-      Storage.saveActivityLogs(remoteLogs);
-    });
-
-    return () => {
-      unsubSettings();
-      unsubEmployees();
-      unsubAttendance();
-      unsubLeaves();
-      unsubExcuses();
-      unsubRules();
-      unsubLogs();
-    };
-  }, []);
-
-  // ----------------------------------------------------
-  // 2. Sync Local Modifications to Cloud Firestore & LocalStorage
-  // ----------------------------------------------------
-  useEffect(() => {
-    Storage.saveSettings(settings);
-    if (!isRemoteUpdate.current['settings']) {
-      CloudStorage.saveSettings(settings);
-    }
-    isRemoteUpdate.current['settings'] = false;
-  }, [settings]);
-
-  useEffect(() => {
-    Storage.saveEmployees(employees);
-    if (!isRemoteUpdate.current['employees']) {
-      CloudStorage.saveEmployeesBulk(employees);
-    }
-    isRemoteUpdate.current['employees'] = false;
-  }, [employees]);
-
-  useEffect(() => {
-    Storage.saveAttendance(attendanceRecords);
-    if (!isRemoteUpdate.current['attendance']) {
-      CloudStorage.saveAttendanceBulk(attendanceRecords);
-    }
-    isRemoteUpdate.current['attendance'] = false;
-  }, [attendanceRecords]);
-
-  useEffect(() => {
-    Storage.saveLeaveRequests(leaveRequests);
-    if (!isRemoteUpdate.current['leaves']) {
-      CloudStorage.saveLeavesBulk(leaveRequests);
-    }
-    isRemoteUpdate.current['leaves'] = false;
-  }, [leaveRequests]);
-
-  useEffect(() => {
-    Storage.saveExcuseRequests(excuseRequests);
-    if (!isRemoteUpdate.current['excuses']) {
-      CloudStorage.saveExcusesBulk(excuseRequests);
-    }
-    isRemoteUpdate.current['excuses'] = false;
-  }, [excuseRequests]);
-
-  useEffect(() => {
-    Storage.saveLeaveRules(leaveRules);
-    if (!isRemoteUpdate.current['rules']) {
-      CloudStorage.saveLeaveRulesBulk(leaveRules);
-    }
-    isRemoteUpdate.current['rules'] = false;
-  }, [leaveRules]);
-
-  useEffect(() => {
-    Storage.saveActivityLogs(activityLogs);
-    isRemoteUpdate.current['logs'] = false;
-  }, [activityLogs]);
-
-  useEffect(() => {
-    Storage.saveSession(session);
-  }, [session]);
-
-  // Online / Offline Detection
-  useEffect(() => {
-    const handleOnline = () => setIsCloudConnected(true);
-    const handleOffline = () => setIsCloudConnected(false);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
-
-  // Activity logger helper
-  const handleLogActivity = (action: string, details: string) => {
-    const newLog: ActivityLogEntry = {
-      id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      date: formatDateNumeric(new Date()),
-      time: getCurrentTime12h(new Date()),
-      timestamp: Date.now(),
-      adminUsername: session?.username || 'fjr',
-      action,
-      details,
-    };
-    setActivityLogs((prev) => [newLog, ...prev]);
-    CloudStorage.saveLog(newLog).catch(console.error);
+  // Persistence triggers
+  const handleUpdateSettings = (newSettings: InstitutionSettings) => {
+    setSettingsState(newSettings);
+    saveSettings(newSettings);
   };
 
-  // Auth Handlers
-  const handleLogin = (userSession: UserSession, rememberMe: boolean) => {
-    setSession(userSession);
-    handleLogActivity(
-      'تسجيل الدخول للنظام',
-      `قام ${userSession.role === 'admin' ? 'المسؤول' : 'الموظف'} (${userSession.name}) بتسجيل الدخول`
-    );
+  const handleLogin = (user: Employee) => {
+    setCurrentUserState(user);
+    setCurrentUser(user);
   };
 
   const handleLogout = () => {
-    if (session) {
-      handleLogActivity(
-        'تسجيل الخروج',
-        `قام (${session.name}) بتسجيل الخروج من النظام`
-      );
-    }
-    setSession(null);
+    setCurrentUserState(null);
+    setCurrentUser(null);
   };
 
-  // Switch account easily
-  const handleSwitchAccount = () => {
-    handleLogout();
+  const handleCheckIn = (record: AttendanceRecord) => {
+    const updated = [record, ...attendance];
+    setAttendanceState(updated);
+    saveAttendance(updated);
   };
 
-  // Check-In / Check-Out from Employee
-  const handleRecordAttendance = (newRecord: AttendanceRecord) => {
-    setAttendanceRecords((prev) => {
-      const existingIdx = prev.findIndex(
-        (r) => r.employeeId === newRecord.employeeId && r.date === newRecord.date
-      );
-      if (existingIdx >= 0) {
-        const copy = [...prev];
-        copy[existingIdx] = newRecord;
-        return copy;
-      }
-      return [newRecord, ...prev];
-    });
-
-    // Save record to cloud directly
-    CloudStorage.saveAttendanceRecord(newRecord);
-
-    handleLogActivity(
-      newRecord.checkOutTime ? 'تسجيل انصراف موظف' : 'تسجيل حضور موظف',
-      `قام الموظف ${newRecord.employeeName} بتسجيل ${newRecord.checkOutTime ? 'الانصراف' : 'الحضور'}`
-    );
+  const handleCheckOut = (record: AttendanceRecord) => {
+    const updated = attendance.map((r) => (r.id === record.id ? record : r));
+    setAttendanceState(updated);
+    saveAttendance(updated);
   };
 
-  // Submit Leave from Employee
-  const handleSubmitLeave = (leaveData: Omit<LeaveRequest, 'id' | 'submittedAt' | 'status'>) => {
+  const handleRequestLeave = (requestData: Omit<LeaveRequest, 'id' | 'status' | 'requestDate'>) => {
     const newLeave: LeaveRequest = {
-      ...leaveData,
+      ...requestData,
       id: `leave-${Date.now()}`,
-      submittedAt: `${formatDateNumeric(new Date())} ${getCurrentTime12h(new Date())}`,
       status: 'pending',
+      requestDate: new Date().toISOString().split('T')[0],
     };
-    setLeaveRequests((prev) => [newLeave, ...prev]);
-    CloudStorage.saveLeaveRequest(newLeave);
-
-    handleLogActivity(
-      'تقديم طلب إجازة',
-      `قدم الموظف ${newLeave.employeeName} طلب إجازة (${newLeave.leaveType}) لعدد ${newLeave.daysCount} أيام`
-    );
+    const updated = [newLeave, ...leaves];
+    setLeavesState(updated);
+    saveLeaves(updated);
   };
 
-  // Submit Excuse from Employee
-  const handleSubmitExcuse = (excuseData: Omit<ExcuseRequest, 'id' | 'submittedAt' | 'status'>) => {
-    const newExcuse: ExcuseRequest = {
-      ...excuseData,
-      id: `excuse-${Date.now()}`,
-      submittedAt: `${formatDateNumeric(new Date())} ${getCurrentTime12h(new Date())}`,
-      status: 'pending',
+  const handleUpdateLeaveStatus = (leaveId: string, status: 'approved' | 'rejected', note?: string) => {
+    const updated = leaves.map((l) => {
+      if (l.id === leaveId) {
+        return {
+          ...l,
+          status,
+          adminResponseNote: note || (status === 'approved' ? 'تمت الموافقة' : 'تم الرفض'),
+        };
+      }
+      return l;
+    });
+    setLeavesState(updated);
+    saveLeaves(updated);
+
+    // If approved, update employee's used leave balance
+    if (status === 'approved') {
+      const targetLeave = leaves.find((l) => l.id === leaveId);
+      if (targetLeave) {
+        const updatedEmployees = employees.map((emp) => {
+          if (emp.id === targetLeave.employeeId) {
+            return {
+              ...emp,
+              usedLeaveBalance: emp.usedLeaveBalance + targetLeave.daysCount,
+            };
+          }
+          return emp;
+        });
+        setEmployeesState(updatedEmployees);
+        saveEmployees(updatedEmployees);
+      }
+    }
+  };
+
+  const handleAddDocument = (docData: Omit<DocumentItem, 'id'>) => {
+    const newDoc: DocumentItem = {
+      ...docData,
+      id: `doc-${Date.now()}`,
     };
-    setExcuseRequests((prev) => [newExcuse, ...prev]);
-    CloudStorage.saveExcuseRequest(newExcuse);
-
-    handleLogActivity(
-      'تقديم طلب عذر',
-      `قدم الموظف ${newExcuse.employeeName} عذر (${newExcuse.type === 'late' ? 'تأخر في الحضور' : 'انصراف مبكر'})`
-    );
+    const updated = [newDoc, ...documents];
+    setDocumentsState(updated);
+    saveDocuments(updated);
   };
 
-  // Reset all transactional data
-  const handleResetAllData = () => {
-    Storage.zeroOutAllData();
-    setEmployees([]);
-    setAttendanceRecords([]);
-    setLeaveRequests([]);
-    setExcuseRequests([]);
-    setActivityLogs([]);
+  const handleAddEmployee = (newEmp: Employee) => {
+    const updated = [...employees, newEmp];
+    setEmployeesState(updated);
+    saveEmployees(updated);
   };
 
-  // Current logged in employee object
-  const currentEmployee =
-    session?.role === 'employee'
-      ? employees.find((e) => e.id === session.employeeId) || null
-      : null;
+  const handleSaveLocation = (loc: { lat: number; lng: number; address: string; radius: number }) => {
+    const newSettings: InstitutionSettings = {
+      ...settings,
+      officeLocation: {
+        lat: loc.lat,
+        lng: loc.lng,
+        address: loc.address,
+        radiusMeters: loc.radius,
+      },
+    };
+    handleUpdateSettings(newSettings);
+    setShowMapPicker(false);
+  };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-100/60 font-cairo text-slate-800 antialiased selection:bg-emerald-500 selection:text-white">
-      {/* Top Header */}
+    <div className="min-h-screen bg-slate-100/60 flex flex-col selection:bg-emerald-600 selection:text-white antialiased">
+      {/* Top Header with Section Navigation Bar */}
       <Header
+        currentUser={currentUser}
         settings={settings}
-        session={session}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
         onLogout={handleLogout}
-        onSwitchAccount={handleSwitchAccount}
-        isCloudConnected={isCloudConnected}
+        onOpenMap={() => setShowMapPicker(true)}
       />
 
       {/* Main Content Area */}
-      <main className="flex-1">
-        {!session ? (
+      <main className="flex-1 max-w-5xl w-full mx-auto p-3 sm:p-6">
+        {!currentUser ? (
           <LoginView
-            settings={settings}
             employees={employees}
             onLogin={handleLogin}
+            activePreviewTab={activeTab}
+            onSelectPreviewTab={setActiveTab}
           />
-        ) : session.role === 'admin' ? (
-          <AdminDashboard
-            settings={settings}
-            employees={employees}
-            attendanceRecords={attendanceRecords}
-            leaveRequests={leaveRequests}
-            excuseRequests={excuseRequests}
-            leaveRules={leaveRules}
-            activityLogs={activityLogs}
-            onUpdateSettings={setSettings}
-            onUpdateEmployees={setEmployees}
-            onUpdateAttendance={setAttendanceRecords}
-            onUpdateLeaves={setLeaveRequests}
-            onUpdateExcuses={setExcuseRequests}
-            onUpdateRules={setLeaveRules}
-            onLogActivity={handleLogActivity}
-            onResetAllData={handleResetAllData}
-          />
-        ) : currentEmployee ? (
-          <EmployeeDashboard
-            employee={currentEmployee}
-            settings={settings}
-            attendanceRecords={attendanceRecords}
-            leaveRequests={leaveRequests}
-            excuseRequests={excuseRequests}
-            leaveRules={leaveRules}
-            onCheckIn={handleRecordAttendance}
-            onCheckOut={handleRecordAttendance}
-            onSubmitLeave={handleSubmitLeave}
-            onSubmitExcuse={handleSubmitExcuse}
-          />
-        ) : (
-          <div className="p-8 text-center text-red-600">
-            خطأ في تحميل بيانات الموظف. يرجى إعادة تسجيل الدخول.
+        ) : currentUser.role === 'admin' ? (
+          <div className="space-y-6">
+            <AdminDashboard
+              settings={settings}
+              employees={employees}
+              attendanceRecords={attendance}
+              leaveRequests={leaves}
+              documents={documents}
+              onUpdateSettings={handleUpdateSettings}
+              onAddEmployee={handleAddEmployee}
+              onUpdateLeaveStatus={handleUpdateLeaveStatus}
+              onOpenLocationPicker={() => setShowMapPicker(true)}
+              onOpenPrintReport={() => setShowPrintModal(true)}
+            />
+
+            {/* Also allow admin to view their personal portal if they wish */}
+            <div className="border-t border-slate-200 pt-6">
+              <h3 className="text-sm font-bold text-slate-500 mb-3 text-right">
+                بصمة وتفاصيل حساب المدير الشخصي:
+              </h3>
+              <EmployeeDashboard
+                employee={currentUser}
+                settings={settings}
+                attendanceRecords={attendance}
+                leaveRequests={leaves}
+                documents={documents}
+                activeTab={activeTab}
+                onTabChange={setActiveTab}
+                onCheckIn={handleCheckIn}
+                onCheckOut={handleCheckOut}
+                onRequestLeave={handleRequestLeave}
+                onAddDocument={handleAddDocument}
+                onOpenLocationPicker={() => setShowMapPicker(true)}
+                onOpenPrintReport={() => setShowPrintModal(true)}
+              />
+            </div>
           </div>
+        ) : (
+          <EmployeeDashboard
+            employee={currentUser}
+            settings={settings}
+            attendanceRecords={attendance}
+            leaveRequests={leaves}
+            documents={documents}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            onCheckIn={handleCheckIn}
+            onCheckOut={handleCheckOut}
+            onRequestLeave={handleRequestLeave}
+            onAddDocument={handleAddDocument}
+            onOpenLocationPicker={() => setShowMapPicker(true)}
+            onOpenPrintReport={() => setShowPrintModal(true)}
+          />
         )}
       </main>
 
-      {/* Footer with Attribution to Abd Al-Majeed Ayyash Bardini */}
-      <Footer settings={settings} />
+      {/* Footer */}
+      <Footer />
+
+      {/* Modals */}
+      {showMapPicker && (
+        <MapLocationPicker
+          initialLat={settings.officeLocation.lat}
+          initialLng={settings.officeLocation.lng}
+          initialRadius={settings.officeLocation.radiusMeters}
+          initialAddress={settings.officeLocation.address}
+          onSave={handleSaveLocation}
+          onClose={() => setShowMapPicker(false)}
+        />
+      )}
+
+      {showPrintModal && (
+        <PrintReportModal
+          settings={settings}
+          records={attendance}
+          employees={employees}
+          currentEmployee={currentUser?.role === 'employee' ? currentUser : null}
+          onClose={() => setShowPrintModal(false)}
+        />
+      )}
     </div>
   );
 }
+
+export default App;

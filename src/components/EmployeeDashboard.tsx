@@ -1,56 +1,48 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Clock,
   MapPin,
+  Clock,
   Calendar,
   CheckCircle2,
-  XCircle,
-  AlertTriangle,
+  AlertCircle,
   FileText,
-  Upload,
+  FileCheck,
   Send,
-  Navigation,
+  Download,
+  Upload,
+  User,
+  Shield,
+  Wifi,
+  Smartphone,
+  Globe,
   Sparkles,
+  RefreshCw,
+  LogOut,
   ChevronRight,
-  ShieldCheck,
-  Palmtree,
-  Info,
+  PlusCircle,
+  XCircle,
+  HelpCircle,
+  Printer
 } from 'lucide-react';
-import confetti from 'canvas-confetti';
-import {
-  Employee,
-  AttendanceRecord,
-  LeaveRequest,
-  ExcuseRequest,
-  SystemSettings,
-  LeaveRuleConfig,
-} from '../types';
-import {
-  getCurrentTime12h,
-  getCurrentTime24h,
-  formatDateArabicLong,
-  formatDateIso,
-  formatDateNumeric,
-  calculateLateSeconds,
-  calculateEarlyDepartureSeconds,
-  formatSecondsToArabic,
-  formatSecondsDigital,
-} from '../utils/time';
-import { calculateDistanceMeters, getDeviceLocation } from '../utils/geo';
+import { Employee, AttendanceRecord, LeaveRequest, DocumentItem, InstitutionSettings } from '../types';
 import { DigitalClock } from './DigitalClock';
-import { MapLocationPicker } from './MapLocationPicker';
+import { formatTime12Hour, formatDateArabic, getTodayDateString, calculateLateMinutes } from '../utils/time';
+import { calculateDistanceMeters, getDeviceLocation, detectNetworkInfo } from '../utils/geo';
 
 interface EmployeeDashboardProps {
   employee: Employee;
-  settings: SystemSettings;
+  settings: InstitutionSettings;
   attendanceRecords: AttendanceRecord[];
   leaveRequests: LeaveRequest[];
-  excuseRequests: ExcuseRequest[];
-  leaveRules: LeaveRuleConfig[];
+  documents: DocumentItem[];
+  activeTab: 'attendance' | 'leaves' | 'documents' | 'profile';
+  onTabChange: (tab: 'attendance' | 'leaves' | 'documents' | 'profile') => void;
   onCheckIn: (record: AttendanceRecord) => void;
   onCheckOut: (record: AttendanceRecord) => void;
-  onSubmitLeave: (leave: Omit<LeaveRequest, 'id' | 'submittedAt' | 'status'>) => void;
-  onSubmitExcuse: (excuse: Omit<ExcuseRequest, 'id' | 'submittedAt' | 'status'>) => void;
+  onRequestLeave: (request: Omit<LeaveRequest, 'id' | 'status' | 'requestDate'>) => void;
+  onAddDocument: (doc: Omit<DocumentItem, 'id'>) => void;
+  onOpenLocationPicker?: () => void;
+  onOpenPrintReport?: () => void;
 }
 
 export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
@@ -58,1049 +50,856 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
   settings,
   attendanceRecords,
   leaveRequests,
-  excuseRequests,
-  leaveRules,
+  documents,
+  activeTab,
+  onTabChange,
   onCheckIn,
   onCheckOut,
-  onSubmitLeave,
-  onSubmitExcuse,
+  onRequestLeave,
+  onAddDocument,
+  onOpenLocationPicker,
+  onOpenPrintReport,
 }) => {
-  const [activeTab, setActiveTab] = useState<'attendance' | 'leaves' | 'new_leave' | 'new_excuse'>('attendance');
-  const [simulatedAtHq, setSimulatedAtHq] = useState<boolean>(true); // Convenient for browser testing
-  const [checkingGps, setCheckingGps] = useState<boolean>(false);
-  const [showHqMap, setShowHqMap] = useState<boolean>(false);
-  const [gpsModal, setGpsModal] = useState<{
-    isOpen: boolean;
-    type: 'check_in' | 'check_out';
-    status: 'success' | 'failed' | 'checking';
-    time?: string;
-    distance?: number;
-    message?: string;
-  }>({
-    isOpen: false,
-    type: 'check_in',
-    status: 'checking',
-  });
-
-  // New Leave Form State
-  const [leaveForm, setLeaveForm] = useState({
-    leaveType: 'إجازة سنوية',
-    startDate: formatDateIso(new Date()),
-    endDate: formatDateIso(new Date()),
-    daysCount: 1,
-    reason: '',
-    attachmentName: '',
-  });
-
-  // New Excuse Form State
-  const [excuseForm, setExcuseForm] = useState({
-    type: 'late' as 'late' | 'early_departure',
-    date: formatDateIso(new Date()),
-    targetTime: '08:17:35',
-    reason: '',
-    explanation: '',
-    attachmentName: '',
-  });
+  const today = getTodayDateString();
 
   // Find today's record for this employee
-  const todayIso = formatDateIso(new Date());
   const todayRecord = attendanceRecords.find(
-    (r) => r.employeeId === employee.id && r.date === todayIso
+    (r) => r.employeeId === employee.id && r.date === today
   );
 
-  // Filter records for this employee
-  const myRecords = attendanceRecords.filter((r) => r.employeeId === employee.id);
-  const myLeaves = leaveRequests.filter((l) => l.employeeId === employee.id);
-  const myExcuses = excuseRequests.filter((e) => e.employeeId === employee.id);
+  // Network info
+  const [networkInfo, setNetworkInfo] = useState(detectNetworkInfo());
 
-  // Calculate my weekly & monthly late totals
-  const totalLateSeconds = myRecords.reduce((acc, curr) => {
-    return acc + (curr.lateExcused ? 0 : curr.lateSeconds || 0);
-  }, 0);
+  // Location / Geofence state
+  const [gpsLoading, setGpsLoading] = useState<boolean>(false);
+  const [gpsError, setGpsError] = useState<string>('');
+  const [currentDistance, setCurrentDistance] = useState<number | null>(null);
+  const [lastCoords, setLastCoords] = useState<{ lat: number; lng: number } | null>(null);
 
-  // Trigger GPS Check for Check-in / Check-out
-  const handleAttendanceAction = async (actionType: 'check_in' | 'check_out') => {
-    setCheckingGps(true);
-    setGpsModal({
-      isOpen: true,
-      type: actionType,
-      status: 'checking',
-      message: 'جاري الاتصال بالأقمار الصناعية والتحقق من الموقع الجغرافي...',
-    });
+  // Leave Form State
+  const [leaveType, setLeaveType] = useState<LeaveRequest['type']>('سنوية');
+  const [startDate, setStartDate] = useState<string>(today);
+  const [endDate, setEndDate] = useState<string>(today);
+  const [daysCount, setDaysCount] = useState<number>(1);
+  const [leaveReason, setLeaveReason] = useState<string>('');
+  const [leaveSuccessMsg, setLeaveSuccessMsg] = useState<string>('');
+
+  // Document Upload State
+  const [docTitle, setDocTitle] = useState<string>('');
+  const [docCategory, setDocCategory] = useState<DocumentItem['category']>('عقد عمل');
+  const [docIssueDate, setDocIssueDate] = useState<string>(today);
+  const [docNotes, setDocNotes] = useState<string>('');
+  const [showDocModal, setShowDocModal] = useState<boolean>(false);
+  const [docSuccessMsg, setDocSuccessMsg] = useState<string>('');
+
+  // Auto calculate leave days
+  useEffect(() => {
+    if (startDate && endDate) {
+      const s = new Date(startDate).getTime();
+      const e = new Date(endDate).getTime();
+      const diffTime = e - s;
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+      setDaysCount(diffDays > 0 ? diffDays : 1);
+    }
+  }, [startDate, endDate]);
+
+  // Check network changes
+  useEffect(() => {
+    const handleOnline = () => setNetworkInfo(detectNetworkInfo());
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOnline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOnline);
+    };
+  }, []);
+
+  // Handle Attendance Action (Check-in or Check-out)
+  const handleAttendanceAction = async (actionType: 'check-in' | 'check-out') => {
+    setGpsLoading(true);
+    setGpsError('');
 
     try {
-      let userLat = settings.orgLocation.lat;
-      let userLng = settings.orgLocation.lng;
-
-      if (!simulatedAtHq) {
-        try {
-          const loc = await getDeviceLocation();
-          userLat = loc.lat;
-          userLng = loc.lng;
-        } catch (err: any) {
-          // If browser GPS fails and simulation is off, report error
-          setGpsModal({
-            isOpen: true,
-            type: actionType,
-            status: 'failed',
-            message: `تعذر الوصول إلى نظام تحديد المواقع (GPS): ${err.message}. يمكنك تفعيل خيار "محاكاة التواجد في المقر" للاختبار السلس.`,
-          });
-          setCheckingGps(false);
-          return;
-        }
-      } else {
-        // Slight random offset within ~15-25m to show real meters calculation
-        userLat += (Math.random() - 0.5) * 0.00015;
-        userLng += (Math.random() - 0.5) * 0.00015;
-      }
-
+      // 1. Get GPS coordinates
+      const loc = await getDeviceLocation();
       const distance = calculateDistanceMeters(
-        { lat: userLat, lng: userLng },
-        { lat: settings.orgLocation.lat, lng: settings.orgLocation.lng }
+        { lat: loc.lat, lng: loc.lng },
+        settings.officeLocation
       );
 
-      const isInside = distance <= settings.gpsRadiusMeters;
-      const nowTime12 = getCurrentTime12h();
-      const nowTime24 = getCurrentTime24h();
+      setCurrentDistance(distance);
+      setLastCoords({ lat: loc.lat, lng: loc.lng });
 
-      if (isInside) {
-        // Success inside radius
-        confetti({
-          particleCount: 70,
-          spread: 60,
-          origin: { y: 0.6 },
-        });
+      const isWithinGeofence = distance <= settings.officeLocation.radiusMeters;
 
-        if (actionType === 'check_in') {
-          const lateSec = calculateLateSeconds(
-            nowTime24,
-            settings.workStartTime,
-            settings.lateGracePeriodMinutes
-          );
+      // Note: allowRemoteAnyNetwork enables punch with verification notes if office allows
+      const currentTime12 = formatTime12Hour(new Date(), true);
+      const net = detectNetworkInfo();
 
-          const newRecord: AttendanceRecord = {
-            id: todayRecord?.id || `att-${Date.now()}`,
-            employeeId: employee.id,
-            employeeName: employee.name,
-            date: todayIso,
-            checkInTime: nowTime24,
-            checkInLocation: {
-              lat: userLat,
-              lng: userLng,
-              distanceMeters: distance,
-              insideRadius: true,
-            },
-            checkOutTime: todayRecord?.checkOutTime,
-            checkOutLocation: todayRecord?.checkOutLocation,
-            lateSeconds: lateSec,
-            earlyDepartureSeconds: todayRecord?.earlyDepartureSeconds || 0,
-            lateExcused: false,
-            earlyExcused: false,
-            status: lateSec > 0 ? 'late' : 'present',
-          };
-          onCheckIn(newRecord);
-        } else {
-          // Check-out
-          const earlySec = calculateEarlyDepartureSeconds(nowTime24, settings.workEndTime);
+      if (actionType === 'check-in') {
+        const lateMinutes = calculateLateMinutes(
+          currentTime12,
+          settings.workStartTime,
+          settings.lateGraceMinutes
+        );
 
-          const updatedRecord: AttendanceRecord = {
-            id: todayRecord?.id || `att-${Date.now()}`,
-            employeeId: employee.id,
-            employeeName: employee.name,
-            date: todayIso,
-            checkInTime: todayRecord?.checkInTime || nowTime24,
-            checkInLocation: todayRecord?.checkInLocation,
-            checkOutTime: nowTime24,
-            checkOutLocation: {
-              lat: userLat,
-              lng: userLng,
-              distanceMeters: distance,
-              insideRadius: true,
-            },
-            lateSeconds: todayRecord?.lateSeconds || 0,
-            earlyDepartureSeconds: earlySec,
-            lateExcused: todayRecord?.lateExcused || false,
-            earlyExcused: false,
-            status: todayRecord?.status || 'present',
-          };
-          onCheckOut(updatedRecord);
+        const newRecord: AttendanceRecord = {
+          id: `att-${Date.now()}`,
+          employeeId: employee.id,
+          employeeName: employee.name,
+          department: employee.department,
+          date: today,
+          checkInTime: currentTime12,
+          checkInTimestamp: Date.now(),
+          checkInLocation: {
+            lat: loc.lat,
+            lng: loc.lng,
+            accuracy: loc.accuracy,
+            distanceMeters: distance,
+            withinGeofence: isWithinGeofence,
+            networkType: net.type,
+          },
+          status: lateMinutes > 0 ? 'late' : 'present',
+          lateMinutes: lateMinutes > 0 ? lateMinutes : 0,
+        };
+
+        onCheckIn(newRecord);
+      } else {
+        if (!todayRecord) {
+          throw new Error('لم يتم تسجيل بصمة الدخول اليوم بعد');
         }
 
-        setGpsModal({
-          isOpen: true,
-          type: actionType,
-          status: 'success',
-          time: nowTime12,
-          distance: distance,
-          message:
-            actionType === 'check_in'
-              ? 'تم تسجيل الحضور بنجاح'
-              : 'تم تسجيل الانصراف بنجاح',
-        });
-      } else {
-        // Outside allowed radius
-        setGpsModal({
-          isOpen: true,
-          type: actionType,
-          status: 'failed',
-          distance: distance,
-          message: 'لا يمكن تسجيل الحضور. يجب أن تكون داخل النطاق الجغرافي للمنظمة.',
-        });
+        const updatedRecord: AttendanceRecord = {
+          ...todayRecord,
+          checkOutTime: currentTime12,
+          checkOutTimestamp: Date.now(),
+          checkOutLocation: {
+            lat: loc.lat,
+            lng: loc.lng,
+            accuracy: loc.accuracy,
+            distanceMeters: distance,
+            withinGeofence: isWithinGeofence,
+          },
+        };
+
+        onCheckOut(updatedRecord);
       }
-    } catch (error: any) {
-      setGpsModal({
-        isOpen: true,
-        type: actionType,
-        status: 'failed',
-        message: 'حدث خطأ غير متوقع أثناء معالجة إحداثيات الموقع',
-      });
+    } catch (err: any) {
+      setGpsError(err?.message || 'تعذر التحقق من بصمة الموقع الجغرافي');
     } finally {
-      setCheckingGps(false);
+      setGpsLoading(false);
     }
   };
 
-  const handleLeaveSubmit = (e: React.FormEvent) => {
+  // Submit Leave Request
+  const handleSubmitLeave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!leaveForm.reason.trim()) {
+    if (!leaveReason.trim()) {
       alert('يرجى كتابة سبب طلب الإجازة');
       return;
     }
 
-    const start = new Date(leaveForm.startDate);
-    const end = new Date(leaveForm.endDate);
-    const diffTime = Math.max(0, end.getTime() - start.getTime());
-    const days = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
-
-    onSubmitLeave({
+    onRequestLeave({
       employeeId: employee.id,
       employeeName: employee.name,
-      leaveType: leaveForm.leaveType,
-      startDate: leaveForm.startDate,
-      endDate: leaveForm.endDate,
-      daysCount: days,
-      reason: leaveForm.reason,
-      attachmentName: leaveForm.attachmentName || undefined,
-      balanceBefore: employee.remainingLeaveBalance,
-      balanceAfter: employee.remainingLeaveBalance - days,
+      department: employee.department,
+      type: leaveType,
+      startDate,
+      endDate,
+      daysCount,
+      reason: leaveReason.trim(),
     });
 
-    setLeaveForm({
-      leaveType: 'إجازة سنوية',
-      startDate: formatDateIso(new Date()),
-      endDate: formatDateIso(new Date()),
-      daysCount: 1,
-      reason: '',
-      attachmentName: '',
-    });
-    setActiveTab('leaves');
-    alert('تم إرسال طلب الإجازة بنجاح، وهو قيد مراجعة الإدارة');
+    setLeaveSuccessMsg('تم إرسال طلب الإجازة بنجاح إلى الإدارة للمراجعة والاعتماد');
+    setLeaveReason('');
+    setTimeout(() => setLeaveSuccessMsg(''), 4000);
   };
 
-  const handleExcuseSubmit = (e: React.FormEvent) => {
+  // Submit Document
+  const handleCreateDocument = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!excuseForm.reason.trim() || !excuseForm.explanation.trim()) {
-      alert('يرجى ملء كافة حقول سبب العذر والتوضيح');
+    if (!docTitle.trim()) {
+      alert('يرجى إدخال عنوان الوثيقة');
       return;
     }
 
-    const lateSec = calculateLateSeconds(
-      excuseForm.targetTime,
-      settings.workStartTime,
-      settings.lateGracePeriodMinutes
-    );
-
-    onSubmitExcuse({
+    onAddDocument({
       employeeId: employee.id,
-      employeeName: employee.name,
-      type: excuseForm.type,
-      date: excuseForm.date,
-      targetTime: excuseForm.targetTime,
-      durationSeconds: lateSec > 0 ? lateSec : 1055,
-      reason: excuseForm.reason,
-      explanation: excuseForm.explanation,
-      attachmentName: excuseForm.attachmentName || undefined,
+      title: docTitle.trim(),
+      category: docCategory,
+      issueDate: docIssueDate,
+      notes: docNotes.trim(),
+      status: 'valid',
+      fileName: `${docTitle.trim()}.pdf`,
     });
 
-    setExcuseForm({
-      type: 'late',
-      date: formatDateIso(new Date()),
-      targetTime: '08:17:35',
-      reason: '',
-      explanation: '',
-      attachmentName: '',
-    });
-    setActiveTab('attendance');
-    alert('تم إرسال طلب العذر بنجاح، وستتم مراجعته من قبل المسؤول');
+    setDocSuccessMsg('تمت إضافة وحفظ المستند في ملف أوراقك بنجاح');
+    setShowDocModal(false);
+    setDocTitle('');
+    setDocNotes('');
+    setTimeout(() => setDocSuccessMsg(''), 4000);
   };
 
+  // Filter records and docs for this employee
+  const myLeaves = leaveRequests.filter((l) => l.employeeId === employee.id);
+  const myDocuments = documents.filter((d) => d.employeeId === employee.id);
+  const myAttendance = attendanceRecords.filter((a) => a.employeeId === employee.id);
+
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-      {/* 11. لوحة معلومات الموظفين - Header Greeting & Live Clock */}
-      <div className="bg-white rounded-3xl p-6 sm:p-8 border border-emerald-100 shadow-sm relative overflow-hidden">
-        {/* Background Accent glow */}
-        <div className="absolute -top-24 -left-24 w-60 h-60 bg-emerald-100/50 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-24 -right-24 w-60 h-60 bg-amber-100/50 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
-          {/* Organization & Greeting */}
-          <div className="flex items-center gap-4 text-center md:text-right">
-            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-white p-1.5 shadow-sm border border-emerald-200 shrink-0">
-              <img
-                src={settings.logoUrl}
-                alt={settings.orgName}
-                className="w-full h-full object-contain"
-                referrerPolicy="no-referrer"
-              />
-            </div>
-            <div>
-              <span className="text-xs sm:text-sm font-bold text-amber-600 block">
-                {settings.orgName}
-              </span>
-              <h2 className="text-xl sm:text-2xl font-black text-slate-900 mt-0.5">
-                أهلاً وسهلاً / {employee.name}
+    <div className="w-full max-w-4xl mx-auto space-y-4 sm:space-y-6">
+      {/* Employee Greeting & Live Time Bar */}
+      <div className="bg-white rounded-3xl p-4 sm:p-6 shadow-sm border border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5 w-full sm:w-auto">
+          <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white font-black text-xl flex items-center justify-center shadow-md shadow-emerald-600/20 shrink-0">
+            {employee.name.charAt(0)}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base sm:text-lg font-black text-slate-800">
+                مرحباً بك، {employee.name}
               </h2>
-              <p className="text-xs text-slate-500 mt-1">
-                {employee.jobTitle} • هاتف: {employee.phone}
-              </p>
+              <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
+                كود {employee.code}
+              </span>
             </div>
-          </div>
-
-          {/* Live Clock Display as specified: 08:15:32 صباحاً | الأحد، 20 سبتمبر 2026 */}
-          <div className="w-full md:w-auto">
-            <DigitalClock variant="hero" />
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              {employee.department} • مؤسسة الفجر الخيرية
+            </p>
           </div>
         </div>
 
-        {/* GPS Testing Toggle Banner (Ensures 100% testability in sandbox iframe) */}
-        <div className="mt-5 pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs bg-slate-50/80 p-3 rounded-2xl">
-          <div className="flex items-center gap-2 text-slate-700">
-            <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span>
-              نطاق تسجيل الحضور: <strong>{settings.gpsRadiusMeters} متر</strong> من {settings.orgLocation.address}
-            </span>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={() => setShowHqMap(true)}
-              className="px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl font-bold transition-all flex items-center gap-1.5 cursor-pointer"
-            >
-              <MapPin className="w-3.5 h-3.5 text-emerald-600" />
-              <span>عرض موقع المقر على الخريطة</span>
-            </button>
-            <span className="text-slate-500 font-medium hidden sm:inline">وضع تحديد الموقع:</span>
-            <button
-              type="button"
-              onClick={() => setSimulatedAtHq(!simulatedAtHq)}
-              className={`px-3 py-1 rounded-xl font-bold transition-all cursor-pointer ${
-                simulatedAtHq
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-amber-600 text-white shadow-xs'
-              }`}
-            >
-              {simulatedAtHq ? '🟢 محاكاة التواجد في المقر (داخل النطاق)' : '📍 استخدام GPS الجهاز الفعلي'}
-            </button>
-          </div>
+        {/* 12-Hour Live Clock Component */}
+        <div className="w-full sm:w-auto flex justify-center sm:justify-end">
+          <DigitalClock />
         </div>
       </div>
 
-      {/* Main Action Buttons: 🟢 تحقق في (Check In) & 🟠 الدفع (Check Out) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {/* Check In Button */}
-        <button
-          id="employee-checkin-btn"
-          disabled={checkingGps || !!todayRecord?.checkInTime}
-          onClick={() => handleAttendanceAction('check_in')}
-          className={`p-5 rounded-3xl border-2 transition-all flex items-center justify-between text-right shadow-sm cursor-pointer ${
-            todayRecord?.checkInTime
-              ? 'bg-emerald-50/70 border-emerald-300 text-emerald-950 opacity-90'
-              : 'bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 border-emerald-500 text-white hover:shadow-md hover:scale-[1.01]'
-          }`}
-        >
-          <div className="space-y-1">
-            <span className="text-xs font-semibold opacity-90 block">
-              تسجيل الحضور اليومي عبر GPS
-            </span>
-            <span className="text-2xl font-black block">🟢 تحقق في</span>
-            {todayRecord?.checkInTime ? (
-              <span className="text-xs font-bold font-mono-num text-emerald-800 bg-white/80 px-2 py-0.5 rounded-lg inline-block">
-                تم التسجيل: {todayRecord.checkInTime}
-              </span>
-            ) : (
-              <span className="text-xs opacity-80 block">
-                الدوام يبدأ في {settings.workStartTime}
-              </span>
-            )}
-          </div>
-          <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-xs flex items-center justify-center shrink-0">
-            <Navigation className="w-7 h-7" />
-          </div>
-        </button>
-
-        {/* Check Out Button */}
-        <button
-          id="employee-checkout-btn"
-          disabled={checkingGps || !todayRecord?.checkInTime || !!todayRecord?.checkOutTime}
-          onClick={() => handleAttendanceAction('check_out')}
-          className={`p-5 rounded-3xl border-2 transition-all flex items-center justify-between text-right shadow-sm cursor-pointer ${
-            todayRecord?.checkOutTime
-              ? 'bg-amber-50/70 border-amber-300 text-amber-950 opacity-90'
-              : !todayRecord?.checkInTime
-              ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
-              : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 border-amber-400 text-white hover:shadow-md hover:scale-[1.01]'
-          }`}
-        >
-          <div className="space-y-1">
-            <span className="text-xs font-semibold opacity-90 block">
-              تسجيل الانصراف الرسمي عبر GPS
-            </span>
-            <span className="text-2xl font-black block">🟠 الدفع</span>
-            {todayRecord?.checkOutTime ? (
-              <span className="text-xs font-bold font-mono-num text-amber-800 bg-white/80 px-2 py-0.5 rounded-lg inline-block">
-                تم الانصراف: {todayRecord.checkOutTime}
-              </span>
-            ) : (
-              <span className="text-xs opacity-80 block">
-                نهاية الدوام في {settings.workEndTime}
-              </span>
-            )}
-          </div>
-          <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-xs flex items-center justify-center shrink-0">
-            <Clock className="w-7 h-7" />
-          </div>
-        </button>
-      </div>
-
-      {/* Leave Balance Overview Cards as specified:
-          رصيد الإجازة السنوية: 30 يوماً | مستخدم: 8 أيام | متبقي: 22 يوماً */}
-      <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs">
-        <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
-          <div className="flex items-center gap-2 text-slate-800 font-bold text-sm">
-            <Palmtree className="w-4 h-4 text-emerald-600" />
-            <span>رصيد الإجازات السنوية الحالي للموظف</span>
-          </div>
-          <span className="text-xs text-slate-400">سنة {new Date().getFullYear()}</span>
-        </div>
-        <div className="grid grid-cols-3 gap-3 text-center">
-          <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3">
-            <span className="text-xs text-slate-500 block mb-1">الرصيد الإجمالي</span>
-            <span className="text-xl sm:text-2xl font-black text-slate-800 font-mono-num">
-              {employee.annualLeaveBalance}
-            </span>
-            <span className="text-[10px] text-slate-400 block">يوماً</span>
-          </div>
-
-          <div className="bg-amber-50/70 border border-amber-200/70 rounded-2xl p-3">
-            <span className="text-xs text-amber-800 block mb-1">المستخدم</span>
-            <span className="text-xl sm:text-2xl font-black text-amber-700 font-mono-num">
-              {employee.usedLeaveBalance}
-            </span>
-            <span className="text-[10px] text-amber-600 block">أيام مستهلكة</span>
-          </div>
-
-          <div className="bg-emerald-50/70 border border-emerald-200/70 rounded-2xl p-3">
-            <span className="text-xs text-emerald-800 block mb-1">المتبقي</span>
-            <span className="text-xl sm:text-2xl font-black text-emerald-700 font-mono-num">
-              {employee.remainingLeaveBalance}
-            </span>
-            <span className="text-[10px] text-emerald-600 block">يوماً متاحاً</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Navigation Tabs for Employee:
-          📋 حضوري | 🏖️ أوراقي | 📝 طلب إجازة | ⚠️ طلب عذر */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-200">
-        <button
-          onClick={() => setActiveTab('attendance')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition-all cursor-pointer ${
-            activeTab === 'attendance'
-              ? 'bg-emerald-600 text-white shadow-xs'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          <span>📋 حضوري</span>
-          <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white/20">
-            {myRecords.length}
+      {/* Connectivity & Office Proximity Badge */}
+      <div className="bg-gradient-to-r from-emerald-900 to-slate-900 text-white rounded-2xl p-3 sm:p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 text-xs">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="flex items-center gap-1.5 font-bold text-emerald-300">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+            <Wifi className="w-4 h-4" />
+            <span>الشبكة الحالية:</span>
           </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('leaves')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition-all cursor-pointer ${
-            activeTab === 'leaves'
-              ? 'bg-emerald-600 text-white shadow-xs'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          <span>🏖️ أوراقي</span>
-          <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white/20">
-            {myLeaves.length}
+          <span className="bg-white/10 px-2.5 py-1 rounded-lg font-medium">
+            {networkInfo.type}
           </span>
-        </button>
+          <span className="text-slate-400 text-[11px]">
+            (يعمل الدوام على أي شبكة شريحة أو واي فاي أو ADSL أو ستارلنك)
+          </span>
+        </div>
 
-        <button
-          onClick={() => setActiveTab('new_leave')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition-all cursor-pointer ${
-            activeTab === 'new_leave'
-              ? 'bg-emerald-600 text-white shadow-xs'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          <span>📝 طلب إجازة</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('new_excuse')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition-all cursor-pointer ${
-            activeTab === 'new_excuse'
-              ? 'bg-amber-600 text-white shadow-xs'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          <span>⚠️ طلب عذر</span>
-        </button>
+        <div className="flex items-center gap-2 text-slate-300">
+          <MapPin className="w-3.5 h-3.5 text-amber-400" />
+          <span>مقر الدوام: {settings.officeLocation.address}</span>
+        </div>
       </div>
 
-      {/* Tab 1: 📋 حضوري (My Attendance) */}
+      {/* MAIN TAB CONTENT */}
+      {/* 1. ATTENDANCE TAB */}
       {activeTab === 'attendance' && (
-        <div className="space-y-4">
-          {/* Late Time Accumulator Banner as specified in Section 6 */}
-          <div className="bg-gradient-to-r from-amber-50 to-emerald-50 border border-amber-200 rounded-3xl p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="space-y-1 text-center sm:text-right">
-              <span className="text-xs font-bold text-amber-900 block">
-                حساب الوقت المتأخر تلقائياً (بالساعات + الدقائق + الثواني):
-              </span>
-              <p className="text-xs text-slate-600">
-                يقوم النظام باحتساب التأخير بدقة، ويستثني الفترات التي تمت الموافقة على أعذارها.
-              </p>
-            </div>
-            <div className="bg-white px-4 py-2.5 rounded-2xl border border-amber-300 shadow-2xs text-center shrink-0">
-              <span className="text-[11px] text-slate-400 block">إجمالي التأخير المحسوب</span>
-              <span className="text-base sm:text-lg font-black font-mono-num text-red-700">
-                {formatSecondsToArabic(totalLateSeconds)}
-              </span>
-            </div>
-          </div>
-
-          {/* Attendance Table */}
-          <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs">
-            <div className="p-4 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between">
-              <h3 className="font-bold text-sm text-slate-800 flex items-center gap-2">
-                <span>سجل حضوري وانصرافي</span>
+        <div className="space-y-4 sm:space-y-6">
+          {/* Punch Box */}
+          <div className="bg-white rounded-3xl p-5 sm:p-7 shadow-sm border border-slate-100 text-center relative overflow-hidden">
+            <div className="max-w-md mx-auto">
+              <h3 className="text-lg sm:text-xl font-black text-slate-800 mb-1">
+                تسجيل بصمة الدوام اليومي
               </h3>
-              <span className="text-xs text-slate-500">
-                إجمالي السجلات: {myRecords.length}
-              </span>
-            </div>
+              <p className="text-xs text-slate-500 mb-6">
+                ساعات العمل الرسمية: من {settings.workStartTime} إلى {settings.workEndTime} (نظام 12 ساعة)
+              </p>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-right text-xs sm:text-sm">
-                <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                  <tr>
-                    <th className="p-3.5">التاريخ</th>
-                    <th className="p-3.5">تحقق في (حضور)</th>
-                    <th className="p-3.5">الدفع (انصراف)</th>
-                    <th className="p-3.5">وقت التأخير</th>
-                    <th className="p-3.5">المغادرة المبكرة</th>
-                    <th className="p-3.5">حالة السجل</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {myRecords.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-8 text-center text-slate-400">
-                        لا توجد سجلات حضور مسجلة حتى الآن
-                      </td>
-                    </tr>
-                  ) : (
-                    myRecords.map((r) => (
-                      <tr key={r.id} className="hover:bg-slate-50/60 transition-colors">
-                        <td className="p-3.5 font-mono-num font-semibold text-slate-800">
-                          {r.date}
-                        </td>
-                        <td className="p-3.5 font-mono-num text-emerald-800 font-medium">
-                          {r.checkInTime || '—'}
-                        </td>
-                        <td className="p-3.5 font-mono-num text-amber-800 font-medium">
-                          {r.checkOutTime || '—'}
-                        </td>
-                        <td className="p-3.5 font-mono-num">
-                          {r.lateExcused ? (
-                            <span className="text-emerald-600 font-bold text-xs bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                              معفى بعذر معتمد
-                            </span>
-                          ) : r.lateSeconds > 0 ? (
-                            <span className="text-red-600 font-bold">
-                              {formatSecondsDigital(r.lateSeconds)}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                        <td className="p-3.5 font-mono-num">
-                          {r.earlyDepartureSeconds > 0 ? (
-                            <span className="text-amber-600 font-bold">
-                              {formatSecondsDigital(r.earlyDepartureSeconds)}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                        <td className="p-3.5">
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-xs font-bold inline-block ${
-                              r.status === 'present'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : r.status === 'late'
-                                ? 'bg-amber-100 text-amber-800'
-                                : r.status === 'on_leave'
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-red-100 text-red-800'
-                            }`}
-                          >
-                            {r.status === 'present'
-                              ? '🟢 حاضر'
-                              : r.status === 'late'
-                              ? '🟠 متأخر'
-                              : r.status === 'on_leave'
-                              ? '🏖️ إجازة'
-                              : '🔴 غائب'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 2: 🏖️ أوراقي (My Leaves) */}
-      {activeTab === 'leaves' && (
-        <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs space-y-4">
-          <div className="p-4 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between">
-            <h3 className="font-bold text-sm text-slate-800">
-              سجل طلبات الإجازات المقدمة
-            </h3>
-            <button
-              onClick={() => setActiveTab('new_leave')}
-              className="text-xs font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 cursor-pointer"
-            >
-              <span>تقديم طلب جديد</span>
-              <ChevronRight className="w-4 h-4 rotate-180" />
-            </button>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-right text-xs sm:text-sm">
-              <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                <tr>
-                  <th className="p-3.5">نوع الإجازة</th>
-                  <th className="p-3.5">من تاريخ</th>
-                  <th className="p-3.5">إلى تاريخ</th>
-                  <th className="p-3.5">عدد الأيام</th>
-                  <th className="p-3.5">السبب</th>
-                  <th className="p-3.5">حالة الطلب</th>
-                  <th className="p-3.5">ملاحظات الإدارة</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {myLeaves.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="p-8 text-center text-slate-400">
-                      لم تقم بتقديم أي طلبات إجازة حتى الآن
-                    </td>
-                  </tr>
-                ) : (
-                  myLeaves.map((l) => (
-                    <tr key={l.id} className="hover:bg-slate-50/60 transition-colors">
-                      <td className="p-3.5 font-bold text-emerald-900">{l.leaveType}</td>
-                      <td className="p-3.5 font-mono-num">{l.startDate}</td>
-                      <td className="p-3.5 font-mono-num">{l.endDate}</td>
-                      <td className="p-3.5 font-bold">{l.daysCount} يوم</td>
-                      <td className="p-3.5 text-slate-600 max-w-xs">{l.reason}</td>
-                      <td className="p-3.5">
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-xs font-bold inline-block ${
-                            l.status === 'approved'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : l.status === 'rejected'
-                              ? 'bg-red-100 text-red-800'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}
-                        >
-                          {l.status === 'approved'
-                            ? '🟢 موافقة'
-                            : l.status === 'rejected'
-                            ? '🔴 مرفوض'
-                            : '🟠 قيد المراجعة'}
-                        </span>
-                      </td>
-                      <td className="p-3.5 text-xs text-slate-500">
-                        {l.adminNotes || '—'}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 3: 📝 طلب إجازة (New Leave Request) */}
-      {activeTab === 'new_leave' && (
-        <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs max-w-2xl mx-auto">
-          <div className="flex items-center gap-2 text-emerald-800 font-bold text-base mb-5 border-b border-slate-100 pb-3">
-            <FileText className="w-5 h-5 text-emerald-600" />
-            <span>نموذج تقديم طلب إجازة رسمي</span>
-          </div>
-
-          <form onSubmit={handleLeaveSubmit} className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                نوع الإجازة المطلوبة
-              </label>
-              <select
-                value={leaveForm.leaveType}
-                onChange={(e) => setLeaveForm({ ...leaveForm, leaveType: e.target.value })}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-              >
-                {leaveRules.map((rule) => (
-                  <option key={rule.id} value={rule.leaveType}>
-                    {rule.leaveType} {rule.deductFromBalanceOnApprove ? '(تُخصم من الرصيد)' : '(لا تُخصم)'}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  تاريخ بدء الإجازة
-                </label>
-                <input
-                  type="date"
-                  required
-                  value={leaveForm.startDate}
-                  onChange={(e) => setLeaveForm({ ...leaveForm, startDate: e.target.value })}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  تاريخ انتهاء الإجازة
-                </label>
-                <input
-                  type="date"
-                  required
-                  value={leaveForm.endDate}
-                  onChange={(e) => setLeaveForm({ ...leaveForm, endDate: e.target.value })}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                سبب الإجازة والتفاصيل
-              </label>
-              <textarea
-                required
-                rows={3}
-                value={leaveForm.reason}
-                onChange={(e) => setLeaveForm({ ...leaveForm, reason: e.target.value })}
-                placeholder="أدخل سبب طلب الإجازة بوضوح..."
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                إرفاق مستند أو تقرير طبي (اختياري)
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="file"
-                  id="leave-file-input"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      setLeaveForm({ ...leaveForm, attachmentName: file.name });
-                    }
-                  }}
-                  className="hidden"
-                />
-                <label
-                  htmlFor="leave-file-input"
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl border border-slate-300 transition-colors flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Upload className="w-4 h-4 text-emerald-600" />
-                  <span>اختيار ملف من الجهاز</span>
-                </label>
-                <span className="text-xs text-slate-500 font-mono-num truncate">
-                  {leaveForm.attachmentName || 'لم يتم اختيار ملف بعد'}
-                </span>
-              </div>
-            </div>
-
-            <div className="pt-3">
-              <button
-                type="submit"
-                className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Send className="w-4 h-4" />
-                <span>إرسال طلب الإجازة للمراجعة</span>
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Tab 4: ⚠️ طلب عذر (New Excuse Request) */}
-      {activeTab === 'new_excuse' && (
-        <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs max-w-2xl mx-auto">
-          <div className="flex items-center gap-2 text-amber-800 font-bold text-base mb-5 border-b border-slate-100 pb-3">
-            <AlertTriangle className="w-5 h-5 text-amber-600" />
-            <span>تقديم طلب اعتذار (عذر تأخر أو انصراف مبكر)</span>
-          </div>
-
-          <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl mb-4 text-xs text-amber-900 leading-relaxed">
-            <strong>ملاحظة نظام الأعذار:</strong> في حالة الموافقة على عذر التأخر، لن يتم احتساب مدة التأخير المقابلة في إجمالي ساعات التأخير الشهرية للموظف. وفي حالة الرفض، يُحسب التأخير بالكامل.
-          </div>
-
-          <form onSubmit={handleExcuseSubmit} className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  نوع الاعتذار
-                </label>
-                <select
-                  value={excuseForm.type}
-                  onChange={(e) =>
-                    setExcuseForm({
-                      ...excuseForm,
-                      type: e.target.value as 'late' | 'early_departure',
-                    })
-                  }
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                >
-                  <option value="late">عذر التأخر في الوصول</option>
-                  <option value="early_departure">عذر المغادرة المبكرة</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  تاريخ اليوم المعني
-                </label>
-                <input
-                  type="date"
-                  required
-                  value={excuseForm.date}
-                  onChange={(e) => setExcuseForm({ ...excuseForm, date: e.target.value })}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                وقت الوصول المتأخر / وقت الانصراف
-              </label>
-              <input
-                type="time"
-                step="1"
-                required
-                value={excuseForm.targetTime}
-                onChange={(e) => setExcuseForm({ ...excuseForm, targetTime: e.target.value })}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono-num focus:ring-2 focus:ring-amber-500 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                سبب التأخر أو الانصراف
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="مثال: ازدحام مروري خانق، ظرف صحي طارئ، مراجعة دائرة حكومية..."
-                value={excuseForm.reason}
-                onChange={(e) => setExcuseForm({ ...excuseForm, reason: e.target.value })}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                توضيح مفصل
-              </label>
-              <textarea
-                required
-                rows={3}
-                placeholder="اشرح ملابسات الموقف للإدارة بدقة..."
-                value={excuseForm.explanation}
-                onChange={(e) => setExcuseForm({ ...excuseForm, explanation: e.target.value })}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                المستند أو الصورة المرفقة (اختياري)
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="file"
-                  id="excuse-file-input"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      setExcuseForm({ ...excuseForm, attachmentName: file.name });
-                    }
-                  }}
-                  className="hidden"
-                />
-                <label
-                  htmlFor="excuse-file-input"
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl border border-slate-300 transition-colors flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Upload className="w-4 h-4 text-amber-600" />
-                  <span>إرفاق صورة أو وثيقة إثبات</span>
-                </label>
-                <span className="text-xs text-slate-500 font-mono-num truncate">
-                  {excuseForm.attachmentName || 'لم يتم اختيار مرفق'}
-                </span>
-              </div>
-            </div>
-
-            <div className="pt-3">
-              <button
-                type="submit"
-                className="w-full py-3 px-4 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Send className="w-4 h-4" />
-                <span>إرسال طلب العذر للمسؤول</span>
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* GPS Feedback Modal as specified in Section 5:
-          داخل نصف القطر:
-          🟢 تم تسجيل الحضور بنجاح
-          وقت: 07:58:24 صباحاً
-          موقع: نطاق المنظمة الداخلي
-          خارج نصف القطر:
-          🔴 لا يمكن تسجيل الحضور
-          يجب أن تكون داخل النطاق الجغرافي للمنظمة. */}
-      {gpsModal.isOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-md p-6 sm:p-8 shadow-2xl border border-slate-200 text-center animate-in fade-in zoom-in duration-200">
-            {gpsModal.status === 'checking' && (
-              <div className="space-y-4 py-6">
-                <div className="w-16 h-16 rounded-full bg-emerald-50 border-4 border-emerald-500 border-t-transparent animate-spin mx-auto" />
-                <h3 className="font-bold text-slate-800 text-lg">جاري فحص الموقع الجغرافي (GPS)</h3>
-                <p className="text-xs text-slate-500">{gpsModal.message}</p>
-              </div>
-            )}
-
-            {gpsModal.status === 'success' && (
-              <div className="space-y-5">
-                <div className="w-18 h-18 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-inner">
-                  <CheckCircle2 className="w-10 h-10" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-black text-emerald-800">
-                    🟢 {gpsModal.message}
-                  </h3>
-                  <div className="mt-4 p-4 bg-emerald-50 border border-emerald-200 rounded-2xl space-y-2 text-right text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500">الوقت المسجل:</span>
-                      <span className="font-bold font-mono-num text-emerald-900 text-sm">
-                        {gpsModal.time}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500">الموقع الميداني:</span>
-                      <span className="font-bold text-emerald-800">
-                        نطاق المنظمة الداخلي (على بعد {gpsModal.distance} متر)
-                      </span>
-                    </div>
+              {/* Status Display */}
+              <div className="grid grid-cols-2 gap-3 mb-6">
+                <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 text-right">
+                  <span className="text-[11px] font-bold text-slate-500 block mb-1">
+                    بصمة الحضور اليوم:
+                  </span>
+                  <div className="text-sm sm:text-base font-black text-emerald-700 flex items-center gap-1.5 font-mono">
+                    <Clock className="w-4 h-4 text-emerald-600" />
+                    <span>{todayRecord?.checkInTime || 'لم تسجل بعد'}</span>
                   </div>
+                  {todayRecord?.lateMinutes ? (
+                    <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded font-bold block mt-1">
+                      تأخير: {todayRecord.lateMinutes} دقيقة
+                    </span>
+                  ) : null}
                 </div>
+
+                <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 text-right">
+                  <span className="text-[11px] font-bold text-slate-500 block mb-1">
+                    بصمة الانصراف اليوم:
+                  </span>
+                  <div className="text-sm sm:text-base font-black text-slate-700 flex items-center gap-1.5 font-mono">
+                    <Clock className="w-4 h-4 text-slate-400" />
+                    <span>{todayRecord?.checkOutTime || 'لم تسجل بعد'}</span>
+                  </div>
+                  {todayRecord?.checkOutTime && (
+                    <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-bold block mt-1">
+                      تم اعتماد الخروج
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-col sm:flex-row gap-3">
                 <button
-                  onClick={() => setGpsModal({ ...gpsModal, isOpen: false })}
-                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
+                  type="button"
+                  disabled={Boolean(todayRecord?.checkInTime) || gpsLoading}
+                  onClick={() => handleAttendanceAction('check-in')}
+                  className={`flex-1 py-4 px-4 rounded-2xl font-black text-sm sm:text-base flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer ${
+                    todayRecord?.checkInTime
+                      ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed shadow-none'
+                      : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-emerald-700/20 active:scale-[0.98]'
+                  }`}
                 >
-                  إغلاق وتأكيد
+                  {gpsLoading ? (
+                    <RefreshCw className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="w-5 h-5 text-amber-300" />
+                  )}
+                  <span>
+                    {todayRecord?.checkInTime ? 'تم تسجيل الحضور اليوم' : 'بصمة تسجيل الحضور'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!todayRecord?.checkInTime || Boolean(todayRecord?.checkOutTime) || gpsLoading}
+                  onClick={() => handleAttendanceAction('check-out')}
+                  className={`flex-1 py-4 px-4 rounded-2xl font-black text-sm sm:text-base flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer ${
+                    !todayRecord?.checkInTime || todayRecord?.checkOutTime
+                      ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed shadow-none'
+                      : 'bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-900 hover:to-black text-white shadow-slate-900/20 active:scale-[0.98]'
+                  }`}
+                >
+                  <LogOut className="w-5 h-5 text-amber-300" />
+                  <span>
+                    {todayRecord?.checkOutTime ? 'تم تسجيل الانصراف' : 'بصمة تسجيل الانصراف'}
+                  </span>
                 </button>
               </div>
-            )}
 
-            {gpsModal.status === 'failed' && (
-              <div className="space-y-5">
-                <div className="w-18 h-18 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto shadow-inner">
-                  <XCircle className="w-10 h-10" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-black text-red-700">
-                    🔴 {gpsModal.message}
-                  </h3>
-                  <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-2xl text-right text-xs text-red-900 space-y-2">
-                    <p>
-                      أنت حالياً خارج النطاق الجغرافي المحدد لمقر المؤسسة.
-                    </p>
-                    {gpsModal.distance !== undefined && (
-                      <div className="flex items-center justify-between font-bold">
-                        <span>المسافة المحسوبة:</span>
-                        <span className="font-mono-num text-red-700 text-sm">
-                          {gpsModal.distance} متر (الحد المسموح {settings.gpsRadiusMeters} متر)
-                        </span>
-                      </div>
-                    )}
+              {/* Error or Notice Box */}
+              {gpsError && (
+                <div className="mt-4 p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs text-right flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold block">تنبيه في الموقع:</span>
+                    <span>{gpsError}</span>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <button
-                    onClick={() => {
-                      setSimulatedAtHq(true);
-                      setGpsModal({ ...gpsModal, isOpen: false });
-                    }}
-                    className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
-                  >
-                    تفعيل محاكاة التواجد في المقر وإعادة المحاولة
-                  </button>
-                  <button
-                    onClick={() => setGpsModal({ ...gpsModal, isOpen: false })}
-                    className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
-                  >
-                    إلغاء
-                  </button>
+              )}
+
+              {currentDistance !== null && (
+                <div className="mt-4 p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs flex items-center justify-between">
+                  <span className="font-medium">المسافة المقاسة عن المقر:</span>
+                  <span className="font-bold font-mono text-sm">
+                    {currentDistance} متر (النطاق المسموح: {settings.officeLocation.radiusMeters}م)
+                  </span>
                 </div>
+              )}
+            </div>
+          </div>
+
+          {/* Quick Attendance History Table */}
+          <div className="bg-white rounded-3xl p-4 sm:p-6 shadow-sm border border-slate-100">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="font-black text-slate-800 text-sm sm:text-base flex items-center gap-2">
+                <Clock className="w-4 h-4 text-emerald-600" />
+                <span>سجل دوامي الأخير</span>
+              </h4>
+              {onOpenPrintReport && (
+                <button
+                  type="button"
+                  onClick={onOpenPrintReport}
+                  className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200 cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>طباعة تقريري</span>
+                </button>
+              )}
+            </div>
+
+            {myAttendance.length === 0 ? (
+              <p className="text-center py-6 text-slate-400 text-xs">
+                لا توجد سجلات دوام سابقة مسجلة لك حتى الآن
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-slate-400 font-bold">
+                      <th className="pb-2.5">التاريخ</th>
+                      <th className="pb-2.5">وقت الحضور (12 ساعة)</th>
+                      <th className="pb-2.5">وقت الانصراف (12 ساعة)</th>
+                      <th className="pb-2.5">الحالة</th>
+                      <th className="pb-2.5">الموقع / الشبكة</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {myAttendance.slice(0, 7).map((rec) => (
+                      <tr key={rec.id} className="hover:bg-slate-50/70">
+                        <td className="py-3 font-semibold text-slate-700">{rec.date}</td>
+                        <td className="py-3 font-mono font-bold text-emerald-700">
+                          {rec.checkInTime || '-'}
+                        </td>
+                        <td className="py-3 font-mono font-medium text-slate-600">
+                          {rec.checkOutTime || '-'}
+                        </td>
+                        <td className="py-3">
+                          {rec.status === 'late' ? (
+                            <span className="bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-md text-[10px]">
+                              متأخر ({rec.lateMinutes} د)
+                            </span>
+                          ) : (
+                            <span className="bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-md text-[10px]">
+                              حاضر بالموعد
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 text-slate-500 text-[11px]">
+                          {rec.checkInLocation?.withinGeofence ? 'داخل المقر' : 'خارج المقر'} • {rec.checkInLocation?.networkType || 'شامل'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* HQ Map View Modal for Employee */}
-      {showHqMap && (
-        <MapLocationPicker
-          initialLat={settings.orgLocation.lat}
-          initialLng={settings.orgLocation.lng}
-          initialRadius={settings.gpsRadiusMeters}
-          initialAddress={settings.orgLocation.address}
-          autoLocateOnOpen={false}
-          onSave={() => setShowHqMap(false)}
-          onClose={() => setShowHqMap(false)}
-        />
+      {/* 2. LEAVES TAB (طلب إجازة) */}
+      {activeTab === 'leaves' && (
+        <div className="space-y-4 sm:space-y-6">
+          {/* Leave Balances Header Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm text-right">
+              <span className="text-[11px] font-bold text-slate-400 block mb-1">
+                الرصيد السنوي المستحق
+              </span>
+              <span className="text-xl sm:text-2xl font-black text-emerald-700 font-mono">
+                {employee.annualLeaveBalance}
+              </span>
+              <span className="text-xs text-slate-500 mr-1">يوم</span>
+            </div>
+
+            <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm text-right">
+              <span className="text-[11px] font-bold text-slate-400 block mb-1">
+                الإجازات المستهلكة
+              </span>
+              <span className="text-xl sm:text-2xl font-black text-amber-600 font-mono">
+                {employee.usedLeaveBalance}
+              </span>
+              <span className="text-xs text-slate-500 mr-1">يوم</span>
+            </div>
+
+            <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm text-right col-span-2 sm:col-span-1">
+              <span className="text-[11px] font-bold text-slate-400 block mb-1">
+                الرصيد المتبقي المتاح
+              </span>
+              <span className="text-xl sm:text-2xl font-black text-teal-600 font-mono">
+                {Math.max(0, employee.annualLeaveBalance - employee.usedLeaveBalance)}
+              </span>
+              <span className="text-xs text-slate-500 mr-1">يوم</span>
+            </div>
+          </div>
+
+          {/* New Leave Request Form */}
+          <div className="bg-white rounded-3xl p-5 sm:p-7 shadow-sm border border-slate-100">
+            <h3 className="font-black text-slate-800 text-base sm:text-lg mb-1 flex items-center gap-2">
+              <Send className="w-5 h-5 text-emerald-600" />
+              <span>تقديم طلب إجازة جديد</span>
+            </h3>
+            <p className="text-xs text-slate-500 mb-5">
+              سيتم إشعار إدارة مؤسسة الفجر فور تقديم الطلب للبت فيه واعتماده
+            </p>
+
+            {leaveSuccessMsg && (
+              <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-bold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{leaveSuccessMsg}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmitLeave} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    نوع الإجازة المطلوبة
+                  </label>
+                  <select
+                    value={leaveType}
+                    onChange={(e) => setLeaveType(e.target.value as any)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  >
+                    <option value="سنوية">إجازة اعتيادية سنوية</option>
+                    <option value="مرضية">إجازة مرضية أو عيادة</option>
+                    <option value="طارئة">إجازة اضطرارية طارئة</option>
+                    <option value="ميدانية">مهمة عمل ميدانية خارجية</option>
+                    <option value="إذن ساعي">إذن خروج ساعي (ساعات محددة)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    عدد الأيام المحسوبة
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={daysCount}
+                    onChange={(e) => setDaysCount(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium font-mono focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    تاريخ البدء
+                  </label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    تاريخ العودة والانتهاء
+                  </label>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  سبب أو تفاصيل الإجازة
+                </label>
+                <textarea
+                  rows={3}
+                  value={leaveReason}
+                  onChange={(e) => setLeaveReason(e.target.value)}
+                  placeholder="اكتب أسباب طلب الإجازة بالتفصيل..."
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full sm:w-auto px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md shadow-emerald-600/20 text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Send className="w-4 h-4" />
+                <span>إرسال طلب الإجازة للمدير</span>
+              </button>
+            </form>
+          </div>
+
+          {/* My Leaves History */}
+          <div className="bg-white rounded-3xl p-4 sm:p-6 shadow-sm border border-slate-100">
+            <h4 className="font-black text-slate-800 text-sm sm:text-base mb-3 flex items-center gap-2">
+              <FileCheck className="w-4 h-4 text-emerald-600" />
+              <span>طلبات الإجازة السابقة وحالتها</span>
+            </h4>
+
+            {myLeaves.length === 0 ? (
+              <p className="text-center py-6 text-slate-400 text-xs">
+                لم تقدم أي طلب إجازة حتى الآن
+              </p>
+            ) : (
+              <div className="space-y-2.5">
+                {myLeaves.map((req) => (
+                  <div
+                    key={req.id}
+                    className="p-3.5 rounded-2xl border border-slate-100 hover:border-slate-200 bg-slate-50/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-xs sm:text-sm text-slate-800">
+                          إجازة {req.type} ({req.daysCount} أيام)
+                        </span>
+                        {req.status === 'approved' && (
+                          <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
+                            معتمدة ومقبولة ✓
+                          </span>
+                        )}
+                        {req.status === 'pending' && (
+                          <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold">
+                            قيد المراجعة ⏳
+                          </span>
+                        )}
+                        {req.status === 'rejected' && (
+                          <span className="text-[10px] bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full font-bold">
+                            مرفوضة ✕
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        من {req.startDate} إلى {req.endDate} • السبب: {req.reason}
+                      </p>
+                      {req.adminResponseNote && (
+                        <p className="text-xs text-emerald-800 font-semibold mt-1 bg-emerald-50/80 p-1.5 rounded-lg border border-emerald-100">
+                          ملاحظة الإدارة: {req.adminResponseNote}
+                        </p>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-slate-400 font-mono">
+                      {req.requestDate}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 3. DOCUMENTS TAB (أوراقي ومستنداتي) */}
+      {activeTab === 'documents' && (
+        <div className="space-y-4 sm:space-y-6">
+          <div className="bg-white rounded-3xl p-5 sm:p-7 shadow-sm border border-slate-100">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+              <div>
+                <h3 className="font-black text-slate-800 text-base sm:text-lg flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-emerald-600" />
+                  <span>قسم أوراقي وملفاتي الوظيفية</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  أرشيف العقود والهوية الوطنية والمؤهلات والشهادات الخاصة بك لدى مؤسسة الفجر
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowDocModal(true)}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>إضافة وثيقة أو عقد</span>
+              </button>
+            </div>
+
+            {docSuccessMsg && (
+              <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-bold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{docSuccessMsg}</span>
+              </div>
+            )}
+
+            {/* Document list */}
+            {myDocuments.length === 0 ? (
+              <div className="text-center py-10 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                <FileText className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                <p className="text-slate-600 font-bold text-xs sm:text-sm">
+                  لا توجد وثائق محفوظة في ملفك حتى الآن
+                </p>
+                <p className="text-slate-400 text-xs mt-1">
+                  يمكنك إضافة صورة الهوية، عقد العمل، أو شهادة المؤهل بالضغط على الزر أعلاه
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                {myDocuments.map((doc) => (
+                  <div
+                    key={doc.id}
+                    className="p-4 rounded-2xl border border-slate-200 hover:border-emerald-500/50 bg-white shadow-2xs transition-all flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md">
+                          {doc.category}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          صادر: {doc.issueDate}
+                        </span>
+                      </div>
+                      <h5 className="font-bold text-slate-800 text-sm mb-1">{doc.title}</h5>
+                      {doc.notes && (
+                        <p className="text-xs text-slate-500 line-clamp-2">{doc.notes}</p>
+                      )}
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                      <span className="text-emerald-700 font-bold text-[11px] flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        ساري ومعتمد
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => alert(`تم تحميل واستعراض وثيقة: ${doc.title}`)}
+                        className="text-slate-600 hover:text-emerald-700 font-semibold flex items-center gap-1 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>تحميل / عرض</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 4. PROFILE TAB (الملف الشخصي والبيانات) */}
+      {activeTab === 'profile' && (
+        <div className="bg-white rounded-3xl p-5 sm:p-7 shadow-sm border border-slate-100 space-y-5">
+          <div>
+            <h3 className="font-black text-slate-800 text-base sm:text-lg flex items-center gap-2">
+              <User className="w-5 h-5 text-emerald-600" />
+              <span>الملف التعريفي والبيانات الوظيفية</span>
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              بيانات الموظف الرسمية المسجلة لدى شؤون الموظفين في مؤسسة الفجر الخيرية الاجتماعية
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
+              <span className="text-[11px] text-slate-400 block font-bold">الاسم الكامل</span>
+              <span className="text-sm font-black text-slate-800">{employee.name}</span>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
+              <span className="text-[11px] text-slate-400 block font-bold">الرقم الوظيفي / الكود</span>
+              <span className="text-sm font-black text-emerald-700 font-mono">{employee.code}</span>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
+              <span className="text-[11px] text-slate-400 block font-bold">القسم / الإدارة</span>
+              <span className="text-sm font-bold text-slate-800">{employee.department}</span>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
+              <span className="text-[11px] text-slate-400 block font-bold">رقم الهاتف للتواصل</span>
+              <span className="text-sm font-bold text-slate-800 font-mono">{employee.phone}</span>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
+              <span className="text-[11px] text-slate-400 block font-bold">رصيد الإجازات السنوي</span>
+              <span className="text-sm font-bold text-emerald-800 font-mono">
+                {employee.annualLeaveBalance} يوماً
+              </span>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
+              <span className="text-[11px] text-slate-400 block font-bold">تاريخ الانضمام</span>
+              <span className="text-sm font-bold text-slate-700 font-mono">
+                {employee.joinDate || '2024-01-01'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Add Document */}
+      {showDocModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl border border-slate-100">
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-emerald-800 to-emerald-600 text-white flex items-center justify-between">
+              <h4 className="font-extrabold text-sm sm:text-base flex items-center gap-2">
+                <Upload className="w-5 h-5 text-amber-300" />
+                <span>إضافة وثيقة أو عقد لملف أوراقي</span>
+              </h4>
+              <button
+                type="button"
+                onClick={() => setShowDocModal(false)}
+                className="p-1 rounded-full hover:bg-white/20 text-white cursor-pointer"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateDocument} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  عنوان الوثيقة أو المستند
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="مثال: عقد العمل الجديد 2026 أو بطاقة الهوية"
+                  value={docTitle}
+                  onChange={(e) => setDocTitle(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    تصنيف الوثيقة
+                  </label>
+                  <select
+                    value={docCategory}
+                    onChange={(e) => setDocCategory(e.target.value as any)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  >
+                    <option value="عقد عمل">عقد عمل</option>
+                    <option value="هوية شخصية">هوية شخصية</option>
+                    <option value="مؤهل علمي">مؤهل علمي</option>
+                    <option value="شهادة خبرة">شهادة خبرة</option>
+                    <option value="طلب رسمي">طلب رسمي</option>
+                    <option value="أخرى">أخرى</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    تاريخ الإصدار
+                  </label>
+                  <input
+                    type="date"
+                    value={docIssueDate}
+                    onChange={(e) => setDocIssueDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  ملاحظات أو رقم الوثيقة
+                </label>
+                <textarea
+                  rows={2}
+                  value={docNotes}
+                  onChange={(e) => setDocNotes(e.target.value)}
+                  placeholder="أي تفاصيل إضافية عن الوثيقة..."
+                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowDocModal(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 text-xs sm:text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>حفظ في أوراقي</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

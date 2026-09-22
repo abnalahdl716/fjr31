@@ -2,137 +2,24 @@
 <html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>مؤسسة الفجر الخيرية الاجتماعية - نظام الحضور والإجازات</title>
-    <meta name="description" content="نظام إدارة حضور الموظفين وإجازاتهم لمؤسسة الفجر الخيرية الاجتماعية مع التحقق من الموقع عبر GPS وتتبع التأخير والتقارير والتخزين السحابي" />
+    <meta name="description" content="نظام إدارة حضور الموظفين وإجازاتهم لمؤسسة الفجر الخيرية الاجتماعية مع التحقق من الموقع عبر GPS وتتبع التأخير والتقارير" />
     <meta property="og:title" content="مؤسسة الفجر الخيرية الاجتماعية - نظام الحضور والإجازات" />
-    <meta property="og:description" content="نظام إدارة حضور الموظفين وإجازاتهم لمؤسسة الفجر الخيرية الاجتماعية مع التحقق من الموقع عبر GPS وتتبع التأخير والتقارير والتخزين السحابي" />
-    <meta property="og:type" content="website" />
-    <meta name="twitter:card" content="summary_large_image" />
-
-    <!-- توجيه ذكي عند فتح الملف مباشرة عبر القرص -->
-    <script>
-      (function() {
-        if (window.location.protocol === 'file:') {
-          // إذا كان متصلاً بالإنترنت، يمكن التوجيه إلى الرابط السحابي المباشر
-          var p = window.location.pathname || '';
-          if (!p.includes('الموقع_بدون_انترنت.html') && 
-              !p.includes('تشغيل_الموقع_مباشرة.html') && 
-              !p.includes('dist/index.html') && 
-              !p.includes('dist\\index.html')) {
-            try {
-              window.location.replace('الموقع_بدون_انترنت.html');
-            } catch (e) {
-              try {
-                window.location.replace('dist/index.html');
-              } catch (err) {}
-            }
-          }
-        }
-      })();
-    </script>
-
-    <!-- Google Fonts for exquisite Arabic typography (Tajawal & Cairo) -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&family=Tajawal:wght@400;500;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
-    <!-- Leaflet CSS for Map selection and radius preview -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <meta property="og:description" content="نظام إدارة حضور الموظفين وإجازاتهم لمؤسسة الفجر الخيرية الاجتماعية مع التحقق من الموقع عبر GPS وتتبع التأخير والتقارير" />
+    <meta name="theme-color" content="#065f46" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- Leaflet CSS for maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Cairo Arabic Google Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
   </head>
-  <body class="bg-gray-50 text-slate-800 antialiased font-['Cairo',sans-serif]">
-    <div id="root">
-      <!-- شاشة إرشادية أنيقة توفر خيارات الفتح بالإنترنت أو الفتح المباشر -->
-      <style>
-        .fallback-container {
-          min-height: 100vh;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 24px;
-          background: #f8fafc;
-          font-family: 'Cairo', system-ui, -apple-system, sans-serif;
-          color: #1e293b;
-          direction: rtl;
-        }
-        .fallback-card {
-          max-width: 620px;
-          width: 100%;
-          background: #ffffff;
-          border-radius: 24px;
-          padding: 36px 32px;
-          box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.03);
-          border: 1px solid #e2e8f0;
-          text-align: center;
-        }
-        .fallback-badge {
-          display: inline-block;
-          background: #ecfdf5;
-          color: #065f46;
-          font-size: 13px;
-          font-weight: 700;
-          padding: 6px 16px;
-          border-radius: 9999px;
-          margin-bottom: 16px;
-          border: 1px solid #a7f3d0;
-        }
-        .fallback-btn {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          gap: 8px;
-          width: 100%;
-          background: #0284c7;
-          color: #ffffff !important;
-          font-weight: 700;
-          font-size: 16px;
-          padding: 14px 24px;
-          border-radius: 14px;
-          text-decoration: none;
-          box-shadow: 0 4px 12px rgba(2, 132, 199, 0.25);
-          transition: all 0.2s;
-          margin-top: 16px;
-        }
-        .fallback-btn:hover {
-          background: #0369a1;
-          transform: translateY(-1px);
-        }
-        .fallback-btn-green {
-          background: #047857;
-          box-shadow: 0 4px 12px rgba(4, 120, 87, 0.25);
-          margin-top: 10px;
-        }
-        .fallback-btn-green:hover {
-          background: #065f46;
-        }
-      </style>
-      <div class="fallback-container">
-        <div class="fallback-card">
-          <div class="fallback-badge">مؤسسة الفجر الخيرية الاجتماعية</div>
-          <h1 style="font-size: 22px; font-weight: 800; margin: 0 0 12px 0; color: #0f172a;">
-            نظام إدارة حضور الموظفين والإجازات (السحابي)
-          </h1>
-          <p style="font-size: 14px; line-height: 1.7; color: #475569; margin: 0 0 16px 0;">
-            يمكنك تشغيل الموقع مباشرة عبر الإنترنت لربط الهواتف والأجهزة المختلفة بسحابة واحدة:
-          </p>
-
-          <a href="https://ais-pre-rsbkab7wqxy6xdm34ehwfg-423922568365.europe-west1.run.app" target="_blank" class="fallback-btn">
-            <span>🌐 فتح التطبيق مباشرة عبر الإنترنت (الرابط السحابي)</span>
-          </a>
-
-          <a href="الموقع_بدون_انترنت.html" class="fallback-btn fallback-btn-green">
-            <span>⚡ فتح النسخة المحلية على هذا الجهاز</span>
-          </a>
-
-          <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #f1f5f9; text-align: right;">
-            <p style="font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 6px;">طرق التشغيل المتاحة في المجلد:</p>
-            <ul style="font-size: 12px; line-height: 1.8; color: #64748b; margin: 0; padding-right: 20px;">
-              <li><strong>التشغيل بالإنترنت:</strong> انقر مرتين على ملف <code style="color:#0284c7;">فتح_الموقع_عبر_الإنترنت.bat</code> أو اختصار <code style="color:#0284c7;">فتح_الموقع_عبر_الإنترنت.url</code>.</li>
-              <li><strong>مشاركة الرابط مع الموظفين:</strong> أرسل لهم الرابط السحابي لفتحه من هواتفهم.</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    </div>
+  <body class="bg-slate-50 text-slate-800 font-sans antialiased selection:bg-emerald-600 selection:text-white">
+    <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -1,75 +1,36 @@
 import React, { useState } from 'react';
 import {
   Users,
-  Clock,
+  MapPin,
   Calendar,
   CheckCircle2,
   XCircle,
-  AlertTriangle,
-  FileText,
-  Settings as SettingsIcon,
-  ShieldCheck,
-  Plus,
-  Edit2,
-  Trash2,
-  Eye,
-  KeyRound,
-  UserX,
-  UserCheck,
+  Clock,
   Printer,
-  Download,
-  Upload,
-  MapPin,
-  Palmtree,
-  History,
+  Sparkles,
   Search,
   Filter,
-  Sliders,
-  Check,
-  ChevronDown,
-  Navigation,
-  LocateFixed,
-  Radio,
+  Trash2,
+  PlusCircle,
+  Settings,
+  ShieldCheck,
+  ChevronDown
 } from 'lucide-react';
-import {
-  Employee,
-  AttendanceRecord,
-  LeaveRequest,
-  ExcuseRequest,
-  LeaveRuleConfig,
-  SystemSettings,
-  ActivityLogEntry,
-} from '../types';
-import {
-  getCurrentTime12h,
-  getCurrentTime24h,
-  formatDateIso,
-  formatDateNumeric,
-  formatSecondsToArabic,
-  formatSecondsDigital,
-  calculateLateSeconds,
-} from '../utils/time';
-import { MapLocationPicker } from './MapLocationPicker';
-import { PrintReportModal } from './PrintReportModal';
-import { Storage } from '../utils/storage';
-import { getDeviceLocation } from '../utils/geo';
+import { Employee, AttendanceRecord, LeaveRequest, DocumentItem, InstitutionSettings } from '../types';
+import { DigitalClock } from './DigitalClock';
+import { getTodayDateString } from '../utils/time';
 
 interface AdminDashboardProps {
-  settings: SystemSettings;
+  settings: InstitutionSettings;
   employees: Employee[];
   attendanceRecords: AttendanceRecord[];
   leaveRequests: LeaveRequest[];
-  excuseRequests: ExcuseRequest[];
-  leaveRules: LeaveRuleConfig[];
-  activityLogs: ActivityLogEntry[];
-  onUpdateSettings: (newSettings: SystemSettings) => void;
-  onUpdateEmployees: (employees: Employee[]) => void;
-  onUpdateAttendance: (records: AttendanceRecord[]) => void;
-  onUpdateLeaves: (leaves: LeaveRequest[]) => void;
-  onUpdateExcuses: (excuses: ExcuseRequest[]) => void;
-  onUpdateRules: (rules: LeaveRuleConfig[]) => void;
-  onLogActivity: (action: string, details: string) => void;
-  onResetAllData?: () => void;
+  documents: DocumentItem[];
+  onUpdateSettings: (settings: InstitutionSettings) => void;
+  onAddEmployee: (emp: Employee) => void;
+  onUpdateLeaveStatus: (leaveId: string, status: 'approved' | 'rejected', note?: string) => void;
+  onOpenLocationPicker: () => void;
+  onOpenPrintReport: () => void;
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
@@ -77,2568 +38,585 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   employees,
   attendanceRecords,
   leaveRequests,
-  excuseRequests,
-  leaveRules,
-  activityLogs,
+  documents,
   onUpdateSettings,
-  onUpdateEmployees,
-  onUpdateAttendance,
-  onUpdateLeaves,
-  onUpdateExcuses,
-  onUpdateRules,
-  onLogActivity,
-  onResetAllData,
+  onAddEmployee,
+  onUpdateLeaveStatus,
+  onOpenLocationPicker,
+  onOpenPrintReport,
 }) => {
-  // Navigation Tabs
-  const [activeTab, setActiveTab] = useState<
-    'overview' | 'employees' | 'attendance' | 'leaves' | 'excuses' | 'reports' | 'leave_report' | 'settings' | 'audit_logs'
-  >('overview');
+  const today = getTodayDateString();
+  const [adminTab, setAdminTab] = useState<'attendance' | 'leaves' | 'employees' | 'settings'>('attendance');
+  const [searchTerm, setSearchTerm] = useState<string>('');
 
-  // Modals
-  const [showMapPicker, setShowMapPicker] = useState<boolean>(false);
-  const [autoLocateMap, setAutoLocateMap] = useState<boolean>(false);
-  const [printModal, setPrintModal] = useState<{
-    isOpen: boolean;
-    type: 'attendance' | 'leaves';
-  }>({ isOpen: false, type: 'attendance' });
+  // Add Employee Form
+  const [showAddEmpModal, setShowAddEmpModal] = useState<boolean>(false);
+  const [newEmpName, setNewEmpName] = useState<string>('');
+  const [newEmpCode, setNewEmpCode] = useState<string>('');
+  const [newEmpPhone, setNewEmpPhone] = useState<string>('');
+  const [newEmpDept, setNewEmpDept] = useState<string>('المشاريع الخيرية');
+  const [newEmpLeaves, setNewEmpLeaves] = useState<number>(30);
 
-  // Employee Edit / Add Modal
-  const [employeeModal, setEmployeeModal] = useState<{
-    isOpen: boolean;
-    mode: 'add' | 'edit';
-    data: Partial<Employee>;
-  }>({
-    isOpen: false,
-    mode: 'add',
-    data: {},
-  });
+  // Settings State
+  const [startTime, setStartTime] = useState<string>(settings.workStartTime);
+  const [endTime, setEndTime] = useState<string>(settings.workEndTime);
+  const [graceMinutes, setGraceMinutes] = useState<number>(settings.lateGraceMinutes);
+  const [officeAddress, setOfficeAddress] = useState<string>(settings.officeLocation.address);
+  const [settingsSaved, setSettingsSaved] = useState<boolean>(false);
 
-  // Employee Profile / History View Modal
-  const [viewEmployeeModal, setViewEmployeeModal] = useState<{
-    isOpen: boolean;
-    employee: Employee | null;
-    tab: 'profile' | 'attendance' | 'leaves' | 'excuses';
-  }>({
-    isOpen: false,
-    employee: null,
-    tab: 'profile',
-  });
-
-  // Attendance Record Edit Modal
-  const [attendanceEditModal, setAttendanceEditModal] = useState<{
-    isOpen: boolean;
-    record: Partial<AttendanceRecord> | null;
-  }>({
-    isOpen: false,
-    record: null,
-  });
-
-  // Reports Filter state
-  const [reportFilter, setReportFilter] = useState({
-    employeeId: 'all',
-    startDate: '2026-09-01',
-    endDate: formatDateIso(new Date()),
-  });
-
-  // System Settings state
-  const [tempSettings, setTempSettings] = useState<SystemSettings>(settings);
-  const [logoPreview, setLogoPreview] = useState<string>(settings.logoUrl);
-  const [isDetectingLocation, setIsDetectingLocation] = useState<boolean>(false);
-  const [locationSuccessMsg, setLocationSuccessMsg] = useState<string>('');
-  const [locationErrorMsg, setLocationErrorMsg] = useState<string>('');
-
-  // Keep tempSettings in sync if cloud settings update from remote
-  React.useEffect(() => {
-    setTempSettings(settings);
-    setLogoPreview(settings.logoUrl);
-  }, [settings]);
-
-  // Handler to fetch and update location automatically from current Admin device GPS
-  const handleDetectCurrentLocation = async (autoSave = false) => {
-    setIsDetectingLocation(true);
-    setLocationSuccessMsg('');
-    setLocationErrorMsg('');
-    try {
-      const loc = await getDeviceLocation();
-      const updated: SystemSettings = {
-        ...tempSettings,
-        orgLocation: {
-          lat: Number(loc.lat.toFixed(6)),
-          lng: Number(loc.lng.toFixed(6)),
-          address: `الموقع الحالي لمدير النظام (دقة ±${loc.accuracy}م)`,
-        },
-        lastLocationSync: `${formatDateNumeric(new Date())} ${getCurrentTime12h(new Date())}`,
-      };
-      setTempSettings(updated);
-      setLocationSuccessMsg(`تم التقاط موقعك الحالي بنجاح: خط عرض ${loc.lat.toFixed(4)}، خط طول ${loc.lng.toFixed(4)} (دقة ±${loc.accuracy}م)`);
-
-      if (autoSave) {
-        onUpdateSettings(updated);
-        onLogActivity(
-          'تحديث موقع النظام تلقائياً حسب تواجد المدير',
-          `تم تحديث إحداثيات موقع الحضور إلى موقع المدير الحالي (${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)})`
-        );
-      }
-    } catch (err: any) {
-      setLocationErrorMsg(err?.message || 'تعذر الوصول إلى نظام تحديد الموقع (GPS) في جهازك');
-    } finally {
-      setIsDetectingLocation(false);
-    }
-  };
-
-  // If autoFollowAdminLocation is enabled in settings, prompt/auto-refresh location on mount
-  React.useEffect(() => {
-    if (tempSettings.autoFollowAdminLocation && !tempSettings.lastLocationSync) {
-      handleDetectCurrentLocation(true).catch(() => {});
-    }
-  }, []);
-
-  // Today stats calculation
-  const todayIso = formatDateIso(new Date());
-  const todayAttendance = attendanceRecords.filter((r) => r.date === todayIso);
-  const activeEmployees = employees.filter((e) => e.status === 'active');
-
-  const presentTodayCount = todayAttendance.filter((r) => r.status === 'present' || r.status === 'late').length;
-  const lateTodayCount = todayAttendance.filter((r) => r.status === 'late').length;
-  const onLeaveTodayCount = todayAttendance.filter((r) => r.status === 'on_leave').length;
-  const absentTodayCount = Math.max(0, activeEmployees.length - presentTodayCount - onLeaveTodayCount);
-
+  // Today's stats
+  const todayRecords = attendanceRecords.filter((r) => r.date === today);
+  const presentCount = todayRecords.filter((r) => r.checkInTime).length;
+  const lateCount = todayRecords.filter((r) => r.status === 'late').length;
   const pendingLeavesCount = leaveRequests.filter((l) => l.status === 'pending').length;
-  const pendingExcusesCount = excuseRequests.filter((e) => e.status === 'pending').length;
 
-  // Search in employees
-  const [employeeSearch, setEmployeeSearch] = useState('');
-  const filteredEmployees = employees.filter(
-    (e) =>
-      e.name.includes(employeeSearch) ||
-      e.username.includes(employeeSearch) ||
-      e.phone.includes(employeeSearch) ||
-      e.jobTitle.includes(employeeSearch)
-  );
-
-  // Handle Logo file upload
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (reader.result) {
-          const resultStr = reader.result as string;
-          setLogoPreview(resultStr);
-          setTempSettings({ ...tempSettings, logoUrl: resultStr });
-        }
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  // Save Settings
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
-    onUpdateSettings(tempSettings);
-    onLogActivity(
-      'تحديث إعدادات النظام',
-      `قام مسؤول النظام بتحديث إعدادات المؤسسة وساعات العمل والموقع الجغرافي`
-    );
-    alert('تم حفظ إعدادات النظام وتحديث الشعار بنجاح');
+    onUpdateSettings({
+      ...settings,
+      workStartTime: startTime,
+      workEndTime: endTime,
+      lateGraceMinutes: graceMinutes,
+      officeLocation: {
+        ...settings.officeLocation,
+        address: officeAddress,
+      },
+    });
+    setSettingsSaved(true);
+    setTimeout(() => setSettingsSaved(false), 3000);
   };
 
-  // Employee CRUD
-  const handleSaveEmployee = (e: React.FormEvent) => {
+  const handleCreateEmployee = (e: React.FormEvent) => {
     e.preventDefault();
-    const data = employeeModal.data;
-    if (!data.name || !data.username || !data.password) {
+    if (!newEmpName.trim() || !newEmpCode.trim()) {
       alert('يرجى ملء جميع الحقول المطلوبة');
       return;
     }
 
-    if (employeeModal.mode === 'add') {
-      const newEmp: Employee = {
-        id: `emp-${Date.now()}`,
-        name: data.name,
-        jobTitle: data.jobTitle || 'موظف',
-        phone: data.phone || '',
-        username: data.username,
-        password: data.password,
-        startDate: data.startDate || formatDateIso(new Date()),
-        annualLeaveBalance: data.annualLeaveBalance ?? 30,
-        usedLeaveBalance: data.usedLeaveBalance ?? 0,
-        remainingLeaveBalance: (data.annualLeaveBalance ?? 30) - (data.usedLeaveBalance ?? 0),
-        status: data.status || 'active',
-        email: data.email,
-        notes: data.notes,
-      };
+    const newEmp: Employee = {
+      id: `emp-${Date.now()}`,
+      name: newEmpName.trim(),
+      code: newEmpCode.trim(),
+      phone: newEmpPhone.trim() || '770000000',
+      department: newEmpDept,
+      role: 'employee',
+      annualLeaveBalance: newEmpLeaves,
+      usedLeaveBalance: 0,
+      joinDate: today,
+    };
 
-      onUpdateEmployees([...employees, newEmp]);
-      onLogActivity('إضافة موظف جديد', `تمت إضافة الموظف ${newEmp.name} برقم وظيفي جديد`);
-    } else {
-      const updated = employees.map((emp) => {
-        if (emp.id === data.id) {
-          const rem = (data.annualLeaveBalance ?? emp.annualLeaveBalance) - (data.usedLeaveBalance ?? emp.usedLeaveBalance);
-          return {
-            ...emp,
-            ...data,
-            remainingLeaveBalance: rem,
-          } as Employee;
-        }
-        return emp;
-      });
-      onUpdateEmployees(updated);
-      onLogActivity('تعديل بيانات موظف', `تم تعديل بيانات الموظف ${data.name}`);
-    }
-
-    setEmployeeModal({ isOpen: false, mode: 'add', data: {} });
+    onAddEmployee(newEmp);
+    setShowAddEmpModal(false);
+    setNewEmpName('');
+    setNewEmpCode('');
+    setNewEmpPhone('');
   };
-
-  const handleDeleteEmployee = (emp: Employee) => {
-    if (confirm(`هل أنت متأكد من حذف الموظف ${emp.name} نهائياً؟`)) {
-      const updated = employees.filter((e) => e.id !== emp.id);
-      onUpdateEmployees(updated);
-      onLogActivity('حذف موظف', `قام المسؤول بحذف الموظف ${emp.name}`);
-    }
-  };
-
-  const handleToggleEmployeeStatus = (emp: Employee) => {
-    const newStatus: 'active' | 'inactive' = emp.status === 'active' ? 'inactive' : 'active';
-    const updated: Employee[] = employees.map((e) =>
-      e.id === emp.id ? { ...e, status: newStatus } : e
-    );
-    onUpdateEmployees(updated);
-    onLogActivity(
-      newStatus === 'active' ? 'إعادة تنشيط حساب موظف' : 'تعطيل حساب موظف',
-      `تم تغيير حالة حساب الموظف ${emp.name} إلى ${newStatus === 'active' ? 'نشط' : 'معطّل'}`
-    );
-  };
-
-  // Leave Approval / Rejection with configurable rule deduction (Section 9)
-  const handleLeaveReview = (leave: LeaveRequest, newStatus: 'approved' | 'rejected') => {
-    const rule = leaveRules.find((r) => r.leaveType === leave.leaveType);
-    let shouldDeduct = false;
-
-    if (newStatus === 'approved') {
-      shouldDeduct = rule ? rule.deductFromBalanceOnApprove : true;
-    } else {
-      shouldDeduct = rule ? rule.deductFromBalanceOnReject : false;
-    }
-
-    // Update Employee balance if needed
-    if (shouldDeduct) {
-      const updatedEmps = employees.map((emp) => {
-        if (emp.id === leave.employeeId) {
-          const newUsed = emp.usedLeaveBalance + leave.daysCount;
-          const newRem = Math.max(0, emp.annualLeaveBalance - newUsed);
-          return {
-            ...emp,
-            usedLeaveBalance: newUsed,
-            remainingLeaveBalance: newRem,
-          };
-        }
-        return emp;
-      });
-      onUpdateEmployees(updatedEmps);
-    }
-
-    // Update Leave request status
-    const updatedLeaves = leaveRequests.map((l) =>
-      l.id === leave.id
-        ? {
-            ...l,
-            status: newStatus,
-            reviewedAt: `${formatDateNumeric()} ${getCurrentTime12h()}`,
-          }
-        : l
-    );
-    onUpdateLeaves(updatedLeaves);
-
-    onLogActivity(
-      newStatus === 'approved' ? 'الموافقة على طلب إجازة' : 'رفض طلب إجازة',
-      `تم ${newStatus === 'approved' ? 'قبول' : 'رفض'} إجازة الموظف ${leave.employeeName} (${leave.leaveType} - ${leave.daysCount} أيام)`
-    );
-  };
-
-  // Excuse Approval / Rejection (Section 7)
-  const handleExcuseReview = (excuse: ExcuseRequest, newStatus: 'approved' | 'rejected') => {
-    const updatedExcuses = excuseRequests.map((e) =>
-      e.id === excuse.id
-        ? {
-            ...e,
-            status: newStatus,
-            reviewedAt: `${formatDateNumeric()} ${getCurrentTime12h()}`,
-          }
-        : e
-    );
-    onUpdateExcuses(updatedExcuses);
-
-    // If approved, mark the matching attendance record as lateExcused / earlyExcused so duration is NOT counted!
-    if (newStatus === 'approved') {
-      const updatedAttendance = attendanceRecords.map((att) => {
-        if (att.employeeId === excuse.employeeId && att.date === excuse.date) {
-          return {
-            ...att,
-            lateExcused: excuse.type === 'late' ? true : att.lateExcused,
-            earlyExcused: excuse.type === 'early_departure' ? true : att.earlyExcused,
-          };
-        }
-        return att;
-      });
-      onUpdateAttendance(updatedAttendance);
-    }
-
-    onLogActivity(
-      newStatus === 'approved' ? 'الموافقة على طلب عذر' : 'رفض طلب عذر',
-      `تمت مراجعة عذر الموظف ${excuse.employeeName} بتاريخ ${excuse.date}: الحالة (${newStatus === 'approved' ? 'موافقة - إعفاء من احتساب التأخير' : 'مرفوض - يُحسب التأخير'})`
-    );
-  };
-
-  // Attendance Record Edit / Delete (Section 17)
-  const handleSaveAttendanceEdit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!attendanceEditModal.record) return;
-
-    const rec = attendanceEditModal.record;
-    const updated = attendanceRecords.map((r) => (r.id === rec.id ? (rec as AttendanceRecord) : r));
-    onUpdateAttendance(updated);
-
-    onLogActivity(
-      `تعديل سجل حضور الموظف ${rec.employeeName}`,
-      `قام المسؤول fjr بتعديل وقت الحضور إلى (${rec.checkInTime || '—'}) والانصراف إلى (${rec.checkOutTime || '—'})`
-    );
-
-    setAttendanceEditModal({ isOpen: false, record: null });
-  };
-
-  const handleDeleteAttendanceRecord = (rec: AttendanceRecord) => {
-    if (confirm(`هل أنت متأكد من حذف سجل حضور الموظف ${rec.employeeName} بتاريخ ${rec.date}؟`)) {
-      const updated = attendanceRecords.filter((r) => r.id !== rec.id);
-      onUpdateAttendance(updated);
-      onLogActivity(
-        `حذف سجل حضور`,
-        `قام المسؤول بحذف سجل حضور الموظف ${rec.employeeName} ليوم ${rec.date}`
-      );
-    }
-  };
-
-  // Filtered reports records
-  const filteredReportRecords = attendanceRecords.filter((r) => {
-    const matchesEmp = reportFilter.employeeId === 'all' || r.employeeId === reportFilter.employeeId;
-    const matchesDate = r.date >= reportFilter.startDate && r.date <= reportFilter.endDate;
-    return matchesEmp && matchesDate;
-  });
-
-  const filteredLeaveReport = leaveRequests.filter((l) => {
-    const matchesEmp = reportFilter.employeeId === 'all' || l.employeeId === reportFilter.employeeId;
-    return matchesEmp;
-  });
-
-  // Calculate totals for report
-  const reportTotalLateSeconds = filteredReportRecords.reduce(
-    (acc, curr) => acc + (curr.lateExcused ? 0 : curr.lateSeconds || 0),
-    0
-  );
-  const reportTotalEarlySeconds = filteredReportRecords.reduce(
-    (acc, curr) => acc + (curr.earlyExcused ? 0 : curr.earlyDepartureSeconds || 0),
-    0
-  );
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-      {/* 10. لوحة تحكم المسؤول الرئيسية - 7 Stat Cards as specified in Section 10 */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
-        {/* 1. إجمالي الموظفين */}
-        <button
-          onClick={() => setActiveTab('employees')}
-          className="bg-white hover:bg-slate-50 border border-slate-200/90 rounded-2xl p-3.5 text-right shadow-2xs transition-all hover:scale-[1.02] cursor-pointer"
-        >
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-bold">👥 إجمالي الموظفين</span>
+    <div className="w-full max-w-4xl mx-auto space-y-4 sm:space-y-6">
+      {/* Admin Header with Clock and Stats */}
+      <div className="bg-white rounded-3xl p-4 sm:p-6 shadow-sm border border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="p-2 rounded-xl bg-amber-100 text-amber-900">
+              <ShieldCheck className="w-5 h-5 text-amber-700" />
+            </span>
+            <h2 className="text-lg sm:text-xl font-black text-slate-900">
+              لوحة تحكم إدارة مؤسسة الفجر الخيرية
+            </h2>
           </div>
-          <span className="text-xl font-black font-mono-num text-slate-900 block">
+          <p className="text-xs text-slate-500 mt-1">
+            إدارة أوقات الدوام، طلبات الإجازات، الموظفين، وتقارير الحضور
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+          <DigitalClock />
+          <button
+            type="button"
+            onClick={onOpenPrintReport}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
+          >
+            <Printer className="w-4 h-4" />
+            <span>طباعة التقارير</span>
+          </button>
+        </div>
+      </div>
+
+      {/* KPI Counters */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm text-right">
+          <span className="text-[11px] font-bold text-slate-400 block mb-1">
+            إجمالي الموظفين
+          </span>
+          <span className="text-xl sm:text-2xl font-black text-slate-800 font-mono">
             {employees.length}
           </span>
-          <span className="text-[10px] text-slate-400">النشط: {activeEmployees.length}</span>
-        </button>
+        </div>
 
-        {/* 2. الحاضر اليوم */}
-        <button
-          onClick={() => setActiveTab('attendance')}
-          className="bg-emerald-50/70 hover:bg-emerald-100/70 border border-emerald-200 rounded-2xl p-3.5 text-right shadow-2xs transition-all hover:scale-[1.02] cursor-pointer"
-        >
-          <div className="flex items-center justify-between text-emerald-800 mb-1">
-            <span className="text-xs font-bold">🟢 الحاضر اليوم</span>
-          </div>
-          <span className="text-xl font-black font-mono-num text-emerald-700 block">
-            {presentTodayCount}
+        <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm text-right">
+          <span className="text-[11px] font-bold text-slate-400 block mb-1">
+            حضور اليوم
           </span>
-          <span className="text-[10px] text-emerald-600">سجلوا حضورهم</span>
-        </button>
-
-        {/* 3. الموظفون المتأخرون */}
-        <button
-          onClick={() => setActiveTab('attendance')}
-          className="bg-amber-50/70 hover:bg-amber-100/70 border border-amber-200 rounded-2xl p-3.5 text-right shadow-2xs transition-all hover:scale-[1.02] cursor-pointer"
-        >
-          <div className="flex items-center justify-between text-amber-800 mb-1">
-            <span className="text-xs font-bold">🟠 المتأخرون اليوم</span>
-          </div>
-          <span className="text-xl font-black font-mono-num text-amber-700 block">
-            {lateTodayCount}
+          <span className="text-xl sm:text-2xl font-black text-emerald-600 font-mono">
+            {presentCount}
           </span>
-          <span className="text-[10px] text-amber-600">تجاوزوا {settings.workStartTime}</span>
-        </button>
+        </div>
 
-        {/* 4. الموظفون الغائبون */}
-        <button
-          onClick={() => setActiveTab('attendance')}
-          className="bg-red-50/70 hover:bg-red-100/70 border border-red-200 rounded-2xl p-3.5 text-right shadow-2xs transition-all hover:scale-[1.02] cursor-pointer"
-        >
-          <div className="flex items-center justify-between text-red-800 mb-1">
-            <span className="text-xs font-bold">🔴 الغائبون اليوم</span>
-          </div>
-          <span className="text-xl font-black font-mono-num text-red-700 block">
-            {absentTodayCount}
+        <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm text-right">
+          <span className="text-[11px] font-bold text-slate-400 block mb-1">
+            المتأخرين اليوم
           </span>
-          <span className="text-[10px] text-red-600">بدون تسجيل حضور</span>
-        </button>
-
-        {/* 5. الموظفون في إجازة */}
-        <button
-          onClick={() => setActiveTab('leaves')}
-          className="bg-blue-50/70 hover:bg-blue-100/70 border border-blue-200 rounded-2xl p-3.5 text-right shadow-2xs transition-all hover:scale-[1.02] cursor-pointer"
-        >
-          <div className="flex items-center justify-between text-blue-800 mb-1">
-            <span className="text-xs font-bold">🏖️ في إجازة</span>
-          </div>
-          <span className="text-xl font-black font-mono-num text-blue-700 block">
-            {onLeaveTodayCount}
+          <span className="text-xl sm:text-2xl font-black text-amber-600 font-mono">
+            {lateCount}
           </span>
-          <span className="text-[10px] text-blue-600">إجازات رسمية</span>
-        </button>
+        </div>
 
-        {/* 6. طلبات الإجازة الجديدة */}
-        <button
-          onClick={() => setActiveTab('leaves')}
-          className="bg-emerald-50/70 hover:bg-emerald-100/70 border border-emerald-300 rounded-2xl p-3.5 text-right shadow-2xs transition-all hover:scale-[1.02] cursor-pointer"
-        >
-          <div className="flex items-center justify-between text-emerald-800 mb-1">
-            <span className="text-xs font-bold">📝 إجازات جديدة</span>
-          </div>
-          <span className="text-xl font-black font-mono-num text-emerald-800 block">
+        <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm text-right">
+          <span className="text-[11px] font-bold text-slate-400 block mb-1">
+            إجازات قيد الانتظار
+          </span>
+          <span className="text-xl sm:text-2xl font-black text-teal-600 font-mono">
             {pendingLeavesCount}
           </span>
-          <span className="text-[10px] text-emerald-700 font-bold">قيد المراجعة</span>
-        </button>
-
-        {/* 7. طلبات أعذار جديدة */}
-        <button
-          onClick={() => setActiveTab('excuses')}
-          className="bg-amber-50/70 hover:bg-amber-100/70 border border-amber-300 rounded-2xl p-3.5 text-right shadow-2xs transition-all hover:scale-[1.02] cursor-pointer"
-        >
-          <div className="flex items-center justify-between text-amber-800 mb-1">
-            <span className="text-xs font-bold">⚠️ أعذار جديدة</span>
-          </div>
-          <span className="text-xl font-black font-mono-num text-amber-800 block">
-            {pendingExcusesCount}
-          </span>
-          <span className="text-[10px] text-amber-700 font-bold">قيد المراجعة</span>
-        </button>
-      </div>
-
-      {/* Main Admin Navigation Bar */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-2 border-b border-slate-200 scrollbar-thin">
-        {[
-          { id: 'overview', label: '📊 نظرة عامة', count: null },
-          { id: 'employees', label: '👥 إدارة الموظفين', count: employees.length },
-          { id: 'attendance', label: '📋 الحضور والانصراف', count: todayAttendance.length },
-          { id: 'leaves', label: '🏖️ طلبات الإجازات', count: pendingLeavesCount },
-          { id: 'excuses', label: '⚠️ مراجعة الأعذار', count: pendingExcusesCount },
-          { id: 'reports', label: '📑 تقرير الحضور والطباعة', count: null },
-          { id: 'leave_report', label: '🏖️ تقرير الإجازات', count: null },
-          { id: 'settings', label: '⚙️ إعدادات النظام', count: null },
-          { id: 'audit_logs', label: '📜 سجل النشاط والتدقيق', count: activityLogs.length },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition-all cursor-pointer ${
-              activeTab === tab.id
-                ? 'bg-emerald-600 text-white shadow-xs'
-                : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
-            }`}
-          >
-            <span>{tab.label}</span>
-            {tab.count !== null && (
-              <span
-                className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                  activeTab === tab.id ? 'bg-white/20' : 'bg-slate-100 text-slate-700'
-                }`}
-              >
-                {tab.count}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab: 📊 Overview */}
-      {activeTab === 'overview' && (
-        <div className="space-y-6">
-          {/* Working hours & GPS live banner */}
-          <div className="bg-white rounded-3xl p-6 border border-emerald-100 shadow-xs flex flex-col md:flex-row items-center justify-between gap-6">
-            <div className="space-y-2 text-center md:text-right">
-              <span className="text-xs font-bold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200 inline-block">
-                مقر المنظمة النشط
-              </span>
-              <h3 className="text-lg sm:text-xl font-black text-slate-900">
-                {settings.orgName}
-              </h3>
-              <p className="text-xs text-slate-600 flex items-center gap-1 justify-center md:justify-start">
-                <MapPin className="w-3.5 h-3.5 text-emerald-600" />
-                <span>{settings.orgLocation.address}</span>
-                <span className="text-slate-300">•</span>
-                <span className="font-bold text-emerald-700">نصف قطر الـ GPS: {settings.gpsRadiusMeters} متر</span>
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                id="open-map-and-locate-overview-btn"
-                onClick={() => {
-                  setAutoLocateMap(true);
-                  setShowMapPicker(true);
-                }}
-                className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer"
-                title="فتح الخريطة وتحديد موقع تواجد المقر تلقائياً حسب مكانك الحالي"
-              >
-                <LocateFixed className="w-4 h-4 text-amber-300 animate-pulse" />
-                <span>فتح الخريطة وتحديد موقع المقر</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setAutoLocateMap(false);
-                  setShowMapPicker(true);
-                }}
-                className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold transition-colors flex items-center gap-2 cursor-pointer"
-              >
-                <MapPin className="w-4 h-4 text-emerald-600" />
-                <span>عرض موقع المقر الحالي</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab('reports')}
-                className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-xs transition-colors flex items-center gap-2 cursor-pointer"
-              >
-                <Printer className="w-4 h-4" />
-                <span>إنشاء وطباعة التقارير</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Today's live attendance snapshot table */}
-          <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs">
-            <div className="p-4 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-emerald-600" />
-                <h4 className="font-bold text-sm text-slate-800">
-                  كشف الحضور والانصراف الميداني لليوم
-                </h4>
-              </div>
-              <span className="text-xs font-mono-num text-slate-500">
-                {formatDateNumeric(new Date())}
-              </span>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-right text-xs sm:text-sm">
-                <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                  <tr>
-                    <th className="p-3.5">الموظف</th>
-                    <th className="p-3.5">الوظيفة</th>
-                    <th className="p-3.5">وقت الحضور</th>
-                    <th className="p-3.5">الموقع الجغرافي</th>
-                    <th className="p-3.5">وقت الانصراف</th>
-                    <th className="p-3.5">التأخير المسجل</th>
-                    <th className="p-3.5">الحالة</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {todayAttendance.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="p-6 text-center text-slate-400">
-                        لم يقم أي موظف بتسجيل الحضور حتى الآن اليوم
-                      </td>
-                    </tr>
-                  ) : (
-                    todayAttendance.map((rec) => (
-                      <tr key={rec.id} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="p-3.5 font-bold text-slate-900">{rec.employeeName}</td>
-                        <td className="p-3.5 text-xs text-slate-500">
-                          {employees.find((e) => e.id === rec.employeeId)?.jobTitle || 'موظف'}
-                        </td>
-                        <td className="p-3.5 font-mono-num font-semibold text-emerald-800">
-                          {rec.checkInTime || '—'}
-                        </td>
-                        <td className="p-3.5 text-xs">
-                          {rec.checkInLocation?.insideRadius ? (
-                            <span className="text-emerald-700 font-bold flex items-center gap-1">
-                              <Check className="w-3.5 h-3.5" />
-                              <span>نطاق المنظمة ({rec.checkInLocation.distanceMeters}م)</span>
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                        <td className="p-3.5 font-mono-num font-semibold text-amber-800">
-                          {rec.checkOutTime || '—'}
-                        </td>
-                        <td className="p-3.5 font-mono-num">
-                          {rec.lateExcused ? (
-                            <span className="text-emerald-600 font-bold text-xs bg-emerald-50 px-2 py-0.5 rounded-md">
-                              معفى بعذر
-                            </span>
-                          ) : rec.lateSeconds > 0 ? (
-                            <span className="text-red-600 font-bold">
-                              {formatSecondsDigital(rec.lateSeconds)}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                        <td className="p-3.5">
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-xs font-bold inline-block ${
-                              rec.status === 'present'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : rec.status === 'late'
-                                ? 'bg-amber-100 text-amber-800'
-                                : rec.status === 'on_leave'
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-red-100 text-red-800'
-                            }`}
-                          >
-                            {rec.status === 'present'
-                              ? 'حاضر'
-                              : rec.status === 'late'
-                              ? 'متأخر'
-                              : rec.status === 'on_leave'
-                              ? 'إجازة'
-                              : 'غائب'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
         </div>
-      )}
+      </div>
 
-      {/* Tab: 👥 إدارة الموظفين (Employee Management - Section 4) */}
-      {activeTab === 'employees' && (
-        <div className="space-y-4">
-          {/* Controls Bar */}
-          <div className="bg-white rounded-3xl p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="relative w-full sm:w-72">
-              <Search className="w-4 h-4 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+      {/* Navigation Sub-Tabs for Admin */}
+      <div className="flex border-b border-slate-200 bg-white rounded-2xl p-1.5 shadow-2xs gap-1">
+        <button
+          type="button"
+          onClick={() => setAdminTab('attendance')}
+          className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-xl transition-all cursor-pointer ${
+            adminTab === 'attendance'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          سجل الحضور اليومي
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setAdminTab('leaves')}
+          className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-xl transition-all cursor-pointer relative ${
+            adminTab === 'leaves'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          <span>طلبات الإجازات</span>
+          {pendingLeavesCount > 0 && (
+            <span className="mr-1.5 px-1.5 py-0.2 bg-amber-400 text-emerald-950 font-black text-[10px] rounded-full">
+              {pendingLeavesCount}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setAdminTab('employees')}
+          className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-xl transition-all cursor-pointer ${
+            adminTab === 'employees'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          دليل الموظفين
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setAdminTab('settings')}
+          className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-xl transition-all cursor-pointer ${
+            adminTab === 'settings'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          إعدادات المقر والدوام
+        </button>
+      </div>
+
+      {/* 1. Admin Attendance */}
+      {adminTab === 'attendance' && (
+        <div className="bg-white rounded-3xl p-4 sm:p-6 shadow-sm border border-slate-100">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-4">
+            <h3 className="font-black text-slate-800 text-sm sm:text-base flex items-center gap-2">
+              <Clock className="w-4 h-4 text-emerald-600" />
+              <span>سجل حضور وانصراف الموظفين</span>
+            </h3>
+            <div className="relative w-full sm:w-64">
+              <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="بحث بالاسم، الوظيفة، الهاتف..."
-                value={employeeSearch}
-                onChange={(e) => setEmployeeSearch(e.target.value)}
-                className="w-full pr-10 pl-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                placeholder="بحث باسم الموظف..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pr-9 pl-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500"
               />
             </div>
-
-            <button
-              onClick={() => {
-                setEmployeeModal({
-                  isOpen: true,
-                  mode: 'add',
-                  data: {
-                    annualLeaveBalance: 30,
-                    usedLeaveBalance: 0,
-                    status: 'active',
-                    startDate: formatDateIso(new Date()),
-                  },
-                });
-              }}
-              className="w-full sm:w-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>إضافة موظف جديد</span>
-            </button>
-          </div>
-
-          {/* Employees Table */}
-          <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-right text-xs sm:text-sm">
-                <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                  <tr>
-                    <th className="p-3.5">اسم الموظف</th>
-                    <th className="p-3.5">نوع الوظيفة</th>
-                    <th className="p-3.5">رقم التليفون</th>
-                    <th className="p-3.5">اسم المستخدم</th>
-                    <th className="p-3.5">تاريخ البدء</th>
-                    <th className="p-3.5 text-center">الرصيد السنوي</th>
-                    <th className="p-3.5 text-center">المستخدم</th>
-                    <th className="p-3.5 text-center">المتبقي</th>
-                    <th className="p-3.5 text-center">الحالة</th>
-                    <th className="p-3.5 text-center">الإجراءات</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {filteredEmployees.length === 0 ? (
-                    <tr>
-                      <td colSpan={10} className="p-8 text-center text-slate-500">
-                        <div className="flex flex-col items-center justify-center space-y-2">
-                          <Users className="w-8 h-8 text-slate-300" />
-                          <p className="font-bold text-slate-700">لا يوجد موظفون مسجلون حالياً</p>
-                          <p className="text-xs text-slate-400">
-                            انقر على زر "إضافة موظف جديد" للبدء بإضافة الموظفين وتعيين بياناتهم
-                          </p>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredEmployees.map((emp) => (
-                      <tr key={emp.id} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="p-3.5 font-bold text-slate-900">{emp.name}</td>
-                        <td className="p-3.5 text-slate-600">{emp.jobTitle}</td>
-                        <td className="p-3.5 font-mono-num" dir="ltr">{emp.phone}</td>
-                        <td className="p-3.5 font-mono-num font-semibold text-emerald-800">{emp.username}</td>
-                        <td className="p-3.5 font-mono-num text-slate-500">{emp.startDate}</td>
-                        <td className="p-3.5 text-center font-mono-num font-bold">{emp.annualLeaveBalance}</td>
-                        <td className="p-3.5 text-center font-mono-num text-amber-700 font-bold">{emp.usedLeaveBalance}</td>
-                        <td className="p-3.5 text-center font-mono-num text-emerald-700 font-bold">{emp.remainingLeaveBalance}</td>
-                        <td className="p-3.5 text-center">
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-xs font-bold inline-block ${
-                              emp.status === 'active'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : 'bg-slate-200 text-slate-600'
-                            }`}
-                          >
-                            {emp.status === 'active' ? 'نشط' : 'غير نشط'}
-                          </span>
-                        </td>
-                        <td className="p-3.5 text-center">
-                          <div className="flex items-center justify-center gap-1">
-                            {/* View Profile & History */}
-                            <button
-                              title="عرض الملف وسجل الحضور والإجازات"
-                              onClick={() =>
-                                setViewEmployeeModal({
-                                  isOpen: true,
-                                  employee: emp,
-                                  tab: 'profile',
-                                })
-                              }
-                              className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
-                            >
-                              <Eye className="w-4 h-4 text-emerald-600" />
-                            </button>
-
-                            {/* Edit Employee */}
-                            <button
-                              title="تعديل الموظف"
-                              onClick={() =>
-                                setEmployeeModal({
-                                  isOpen: true,
-                                  mode: 'edit',
-                                  data: emp,
-                                })
-                              }
-                              className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
-                            >
-                              <Edit2 className="w-4 h-4 text-amber-600" />
-                            </button>
-
-                            {/* Toggle Active / Inactive */}
-                            <button
-                              title={emp.status === 'active' ? 'تعطيل الحساب' : 'تنشيط الحساب'}
-                              onClick={() => handleToggleEmployeeStatus(emp)}
-                              className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
-                            >
-                              {emp.status === 'active' ? (
-                                <UserX className="w-4 h-4 text-orange-600" />
-                              ) : (
-                                <UserCheck className="w-4 h-4 text-emerald-600" />
-                              )}
-                            </button>
-
-                            {/* Delete Employee */}
-                            <button
-                              title="حذف الموظف"
-                              onClick={() => handleDeleteEmployee(emp)}
-                              className="p-1.5 rounded-lg text-slate-600 hover:bg-red-50 transition-colors cursor-pointer"
-                            >
-                              <Trash2 className="w-4 h-4 text-red-600" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab: 📋 الحضور والانصراف الكامل وتعديل السجلات (Section 5, 6, 17) */}
-      {activeTab === 'attendance' && (
-        <div className="space-y-4">
-          <div className="bg-white rounded-3xl p-4 border border-slate-200 shadow-xs flex items-center justify-between">
-            <div>
-              <h3 className="font-bold text-slate-800 text-sm">
-                سجل الحضور والانصراف الميداني (قابلة للتحرير والحذف مع قيد النشاط)
-              </h3>
-              <p className="text-xs text-slate-500">
-                تسجيل الوقت بالثواني، وحساب التأخير والانصراف المبكر تلقائياً
-              </p>
-            </div>
-            <button
-              onClick={() => {
-                if (employees.length === 0) {
-                  alert('يرجى إضافة موظف أولاً من تبويب (إدارة الموظفين) قبل تسجيل قيد حضور يدوي.');
-                  return;
-                }
-                const newRec: AttendanceRecord = {
-                  id: `att-${Date.now()}`,
-                  employeeId: employees[0].id,
-                  employeeName: employees[0].name,
-                  date: formatDateIso(new Date()),
-                  checkInTime: '08:00:00',
-                  checkOutTime: '14:00:00',
-                  lateSeconds: 0,
-                  earlyDepartureSeconds: 0,
-                  lateExcused: false,
-                  earlyExcused: false,
-                  status: 'present',
-                };
-                setAttendanceEditModal({ isOpen: true, record: newRec });
-              }}
-              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>إضافة قيد حضور يدوي</span>
-            </button>
-          </div>
-
-          <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-right text-xs sm:text-sm">
-                <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                  <tr>
-                    <th className="p-3.5">التاريخ</th>
-                    <th className="p-3.5">اسم الموظف</th>
-                    <th className="p-3.5">تحقق في (حضور)</th>
-                    <th className="p-3.5">الدفع (انصراف)</th>
-                    <th className="p-3.5">التأخير (بالثواني)</th>
-                    <th className="p-3.5">الانصراف المبكر</th>
-                    <th className="p-3.5">الحالة</th>
-                    <th className="p-3.5 text-center">الإجراءات</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {attendanceRecords.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="p-8 text-center text-slate-500">
-                        <div className="flex flex-col items-center justify-center space-y-2">
-                          <Clock className="w-8 h-8 text-slate-300" />
-                          <p className="font-bold text-slate-700">لا توجد سجلات حضور وانصراف حالياً</p>
-                          <p className="text-xs text-slate-400">
-                            ستظهر السجلات هنا تلقائياً عند تسجيل الموظفين لحركات الحضور أو عند الإضافة اليدوية
-                          </p>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    attendanceRecords.map((rec) => (
-                      <tr key={rec.id} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="p-3.5 font-mono-num font-semibold text-slate-700">{rec.date}</td>
-                        <td className="p-3.5 font-bold text-slate-900">{rec.employeeName}</td>
-                        <td className="p-3.5 font-mono-num text-emerald-800 font-medium">{rec.checkInTime || '—'}</td>
-                        <td className="p-3.5 font-mono-num text-amber-800 font-medium">{rec.checkOutTime || '—'}</td>
-                        <td className="p-3.5 font-mono-num">
-                          {rec.lateExcused ? (
-                            <span className="text-emerald-600 font-bold text-xs bg-emerald-50 px-2 py-0.5 rounded-md">
-                              معفى بعذر
-                            </span>
-                          ) : rec.lateSeconds > 0 ? (
-                            <span className="text-red-600 font-bold">
-                              {formatSecondsDigital(rec.lateSeconds)}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                        <td className="p-3.5 font-mono-num">
-                          {rec.earlyDepartureSeconds > 0 ? (
-                            <span className="text-amber-600 font-bold">
-                              {formatSecondsDigital(rec.earlyDepartureSeconds)}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                        <td className="p-3.5">
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-xs font-bold inline-block ${
-                              rec.status === 'present'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : rec.status === 'late'
-                                ? 'bg-amber-100 text-amber-800'
-                                : rec.status === 'on_leave'
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-red-100 text-red-800'
-                            }`}
-                          >
-                            {rec.status === 'present'
-                              ? 'حاضر'
-                              : rec.status === 'late'
-                              ? 'متأخر'
-                              : rec.status === 'on_leave'
-                              ? 'إجازة'
-                              : 'غائب'}
-                          </span>
-                        </td>
-                        <td className="p-3.5 text-center">
-                          <div className="flex items-center justify-center gap-1">
-                            <button
-                              title="تعديل السجل"
-                              onClick={() => setAttendanceEditModal({ isOpen: true, record: rec })}
-                              className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-50 cursor-pointer"
-                            >
-                              <Edit2 className="w-4 h-4" />
-                            </button>
-                            <button
-                              title="حذف السجل"
-                              onClick={() => handleDeleteAttendanceRecord(rec)}
-                              className="p-1.5 rounded-lg text-red-600 hover:bg-red-50 cursor-pointer"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab: 🏖️ طلبات الإجازات وقواعد الإجازة (Sections 8, 9) */}
-      {activeTab === 'leaves' && (
-        <div className="space-y-6">
-          {/* Leave Requests Review Table */}
-          <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs">
-            <div className="p-4 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between">
-              <h3 className="font-bold text-sm text-slate-800 flex items-center gap-2">
-                <Palmtree className="w-4 h-4 text-emerald-600" />
-                <span>مراجعة واعتماد طلبات الإجازات</span>
-              </h3>
-              <span className="text-xs text-slate-500">
-                الطلبات المعلقة: {pendingLeavesCount}
-              </span>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-right text-xs sm:text-sm">
-                <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                  <tr>
-                    <th className="p-3.5">الموظف</th>
-                    <th className="p-3.5">نوع الإجازة</th>
-                    <th className="p-3.5">الفترة</th>
-                    <th className="p-3.5 text-center">الأيام</th>
-                    <th className="p-3.5">السبب والمرفقات</th>
-                    <th className="p-3.5 text-center">الحالة</th>
-                    <th className="p-3.5 text-center">الإجراء</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {leaveRequests.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="p-8 text-center text-slate-500">
-                        <div className="flex flex-col items-center justify-center space-y-2">
-                          <Palmtree className="w-8 h-8 text-slate-300" />
-                          <p className="font-bold text-slate-700">لا توجد طلبات إجازة مسجلة</p>
-                          <p className="text-xs text-slate-400">
-                            ستظهر طلبات الإجازات المقدمة من الموظفين هنا لمراجعتها واعتمادها
-                          </p>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    leaveRequests.map((leave) => (
-                      <tr key={leave.id} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="p-3.5 font-bold text-slate-900">{leave.employeeName}</td>
-                        <td className="p-3.5 font-semibold text-emerald-900">{leave.leaveType}</td>
-                        <td className="p-3.5 font-mono-num text-xs text-slate-600">
-                          {leave.startDate} ⬅️ {leave.endDate}
-                        </td>
-                        <td className="p-3.5 text-center font-bold text-slate-900">{leave.daysCount} يوم</td>
-                        <td className="p-3.5 text-slate-600 max-w-xs">
-                          <div>{leave.reason}</div>
-                          {leave.attachmentName && (
-                            <span className="inline-block mt-1 text-[11px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200">
-                              📎 {leave.attachmentName}
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-3.5 text-center">
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-xs font-bold inline-block ${
-                              leave.status === 'approved'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : leave.status === 'rejected'
-                                ? 'bg-red-100 text-red-800'
-                                : 'bg-amber-100 text-amber-800'
-                            }`}
-                          >
-                            {leave.status === 'approved'
-                              ? '🟢 موافقة'
-                              : leave.status === 'rejected'
-                              ? '🔴 مرفوض'
-                              : '🟠 قيد المراجعة'}
-                          </span>
-                        </td>
-                        <td className="p-3.5 text-center">
-                          {leave.status === 'pending' ? (
-                            <div className="flex items-center justify-center gap-1.5">
-                              <button
-                                onClick={() => handleLeaveReview(leave, 'approved')}
-                                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-2xs transition-colors cursor-pointer"
-                              >
-                                موافقة
-                              </button>
-                              <button
-                                onClick={() => handleLeaveReview(leave, 'rejected')}
-                                className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-2xs transition-colors cursor-pointer"
-                              >
-                                رفض
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="text-xs text-slate-400">تم البت بالطلب</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* 9. اترك الإعدادات (Leave Rules Settings as specified in Section 9) */}
-          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h4 className="font-bold text-sm text-slate-800 flex items-center gap-2">
-                  <Sliders className="w-4 h-4 text-emerald-600" />
-                  <span>إعدادات وقواعد الإجازات (قابلة للتعديل وغير مضمنة بشكل ثابت)</span>
-                </h4>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  التحكم في قواعد الخصم من الرصيد السنوي عند الموافقة أو الرفض واشتراط الاعتماد
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {leaveRules.map((rule, idx) => (
-                <div
-                  key={rule.id}
-                  className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-sm text-emerald-950">{rule.leaveType}</span>
-                    <span className="text-xs font-mono-num bg-white px-2 py-0.5 rounded-md border border-slate-200">
-                      الرصيد الافتراضي: {rule.defaultAnnualBalance} يوم
-                    </span>
-                  </div>
-
-                  <div className="space-y-2 text-xs text-slate-700">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={rule.deductFromBalanceOnApprove}
-                        onChange={(e) => {
-                          const updated = [...leaveRules];
-                          updated[idx].deductFromBalanceOnApprove = e.target.checked;
-                          onUpdateRules(updated);
-                        }}
-                        className="rounded-md text-emerald-600 accent-emerald-600"
-                      />
-                      <span>تُخصم من رصيد الإجازات السنوية عند <strong>الموافقة</strong></span>
-                    </label>
-
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={rule.deductFromBalanceOnReject}
-                        onChange={(e) => {
-                          const updated = [...leaveRules];
-                          updated[idx].deductFromBalanceOnReject = e.target.checked;
-                          onUpdateRules(updated);
-                        }}
-                        className="rounded-md text-amber-600 accent-amber-600"
-                      />
-                      <span>تُخصم من الرصيد حتى عند <strong>الرفض</strong> (قاعدة خاصة مطلوبة)</span>
-                    </label>
-
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={rule.requireAttachment}
-                        onChange={(e) => {
-                          const updated = [...leaveRules];
-                          updated[idx].requireAttachment = e.target.checked;
-                          onUpdateRules(updated);
-                        }}
-                        className="rounded-md text-emerald-600 accent-emerald-600"
-                      />
-                      <span>إلزامية إرفاق وثيقة أو تقرير طبي</span>
-                    </label>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab: ⚠️ مراجعة الأعذار (Section 7) */}
-      {activeTab === 'excuses' && (
-        <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs">
-          <div className="p-4 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between">
-            <div>
-              <h3 className="font-bold text-sm text-slate-800 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-600" />
-                <span>مراجعة طلبات الاعتذار (تأخر في الوصول أو انصراف مبكر)</span>
-              </h3>
-              <p className="text-xs text-slate-500">
-                في حال الموافقة: لا يتم احتساب مدة التأخير. في حال الرفض: يتم احتساب مدة التأخير الفعلية.
-              </p>
-            </div>
-            <span className="text-xs text-amber-700 font-bold bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200">
-              {pendingExcusesCount} طلبات جديدة
-            </span>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-right text-xs sm:text-sm">
-              <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                <tr>
-                  <th className="p-3.5">الموظف</th>
-                  <th className="p-3.5">نوع العذر</th>
-                  <th className="p-3.5">التاريخ والوقت</th>
-                  <th className="p-3.5">مدة التأخير المقابلة</th>
-                  <th className="p-3.5">السبب والتوضيح</th>
-                  <th className="p-3.5">المرفقات</th>
-                  <th className="p-3.5 text-center">الحالة</th>
-                  <th className="p-3.5 text-center">الإجراء</th>
+            <table className="w-full text-right text-xs">
+              <thead>
+                <tr className="border-b border-slate-100 text-slate-400 font-bold">
+                  <th className="pb-2.5">الموظف</th>
+                  <th className="pb-2.5">التاريخ</th>
+                  <th className="pb-2.5">الحضور (12 ساعة)</th>
+                  <th className="pb-2.5">الانصراف (12 ساعة)</th>
+                  <th className="pb-2.5">الحالة</th>
+                  <th className="pb-2.5">الموقع والشبكة</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {excuseRequests.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="p-8 text-center text-slate-500">
-                      <div className="flex flex-col items-center justify-center space-y-2">
-                        <AlertTriangle className="w-8 h-8 text-slate-300" />
-                        <p className="font-bold text-slate-700">لا توجد طلبات أعذار مسجلة</p>
-                        <p className="text-xs text-slate-400">
-                          ستظهر طلبات الأعذار المقدمة من الموظفين هنا للبت فيها وإعفاء التأخير أو احتسابه
-                        </p>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  excuseRequests.map((excuse) => (
-                    <tr key={excuse.id} className="hover:bg-slate-50/70 transition-colors">
-                      <td className="p-3.5 font-bold text-slate-900">{excuse.employeeName}</td>
-                      <td className="p-3.5">
-                        <span className="px-2 py-0.5 rounded-md text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                          {excuse.type === 'late' ? 'عذر تأخر في الوصول' : 'عذر مغادرة مبكرة'}
+              <tbody className="divide-y divide-slate-100">
+                {attendanceRecords
+                  .filter((r) =>
+                    searchTerm ? r.employeeName.includes(searchTerm) : true
+                  )
+                  .map((rec) => (
+                    <tr key={rec.id} className="hover:bg-slate-50">
+                      <td className="py-3 font-bold text-slate-800">
+                        {rec.employeeName}
+                        <span className="block text-[10px] text-slate-400 font-normal">
+                          {rec.department}
                         </span>
                       </td>
-                      <td className="p-3.5 font-mono-num text-xs">
-                        <div>{excuse.date}</div>
-                        <div className="text-slate-500">{excuse.targetTime}</div>
+                      <td className="py-3 text-slate-600">{rec.date}</td>
+                      <td className="py-3 font-mono font-bold text-emerald-700">
+                        {rec.checkInTime || '-'}
                       </td>
-                      <td className="p-3.5 font-mono-num font-bold text-red-700">
-                        {formatSecondsDigital(excuse.durationSeconds)}
+                      <td className="py-3 font-mono font-medium text-slate-600">
+                        {rec.checkOutTime || '-'}
                       </td>
-                      <td className="p-3.5 max-w-xs text-xs">
-                        <strong className="block text-slate-800">{excuse.reason}</strong>
-                        <p className="text-slate-500 truncate">{excuse.explanation}</p>
-                      </td>
-                      <td className="p-3.5 text-xs">
-                        {excuse.attachmentName ? (
-                          <span className="text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                            📎 {excuse.attachmentName}
+                      <td className="py-3">
+                        {rec.status === 'late' ? (
+                          <span className="bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded text-[10px]">
+                            تأخير {rec.lateMinutes} د
                           </span>
                         ) : (
-                          <span className="text-slate-400">لا يوجد مرفق</span>
+                          <span className="bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded text-[10px]">
+                            حضور بالموعد
+                          </span>
                         )}
                       </td>
-                      <td className="p-3.5 text-center">
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-xs font-bold inline-block ${
-                            excuse.status === 'approved'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : excuse.status === 'rejected'
-                              ? 'bg-red-100 text-red-800'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}
-                        >
-                          {excuse.status === 'approved'
-                            ? '🟢 موافقة (معفى)'
-                            : excuse.status === 'rejected'
-                            ? '🔴 مرفوض (محسوب)'
-                            : '🟠 قيد المراجعة'}
-                        </span>
-                      </td>
-                      <td className="p-3.5 text-center">
-                        {excuse.status === 'pending' ? (
-                          <div className="flex items-center justify-center gap-1.5">
-                            <button
-                              onClick={() => handleExcuseReview(excuse, 'approved')}
-                              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-2xs transition-colors cursor-pointer"
-                            >
-                              موافقة
-                            </button>
-                            <button
-                              onClick={() => handleExcuseReview(excuse, 'rejected')}
-                              className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-2xs transition-colors cursor-pointer"
-                            >
-                              رفض
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-slate-400">تم البت</span>
-                        )}
+                      <td className="py-3 text-[11px] text-slate-500">
+                        {rec.checkInLocation?.withinGeofence ? '✓ داخل المقر' : 'خارج المقر'} • {rec.checkInLocation?.networkType || 'شامل'}
                       </td>
                     </tr>
-                  ))
-                )}
+                  ))}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
-      {/* Tab: 📑 تقرير الحضور والمغادرة والطباعة (Section 12, 14) */}
-      {activeTab === 'reports' && (
-        <div className="space-y-4">
-          {/* Report Filter Controls */}
-          <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xs grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                تحديد الموظف
-              </label>
-              <select
-                value={reportFilter.employeeId}
-                onChange={(e) => setReportFilter({ ...reportFilter, employeeId: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+      {/* 2. Admin Leaves */}
+      {adminTab === 'leaves' && (
+        <div className="bg-white rounded-3xl p-4 sm:p-6 shadow-sm border border-slate-100 space-y-3">
+          <h3 className="font-black text-slate-800 text-sm sm:text-base mb-3 flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-emerald-600" />
+            <span>طلبات الإجازات للموظفين والاعتماد</span>
+          </h3>
+
+          {leaveRequests.length === 0 ? (
+            <p className="text-center py-6 text-slate-400 text-xs">
+              لا توجد طلبات إجازة حالية
+            </p>
+          ) : (
+            leaveRequests.map((req) => (
+              <div
+                key={req.id}
+                className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
               >
-                <option value="all">جميع الموظفين</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.name} ({emp.jobTitle})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                من تاريخ
-              </label>
-              <input
-                type="date"
-                value={reportFilter.startDate}
-                onChange={(e) => setReportFilter({ ...reportFilter, startDate: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                حتى تاريخ
-              </label>
-              <input
-                type="date"
-                value={reportFilter.endDate}
-                onChange={(e) => setReportFilter({ ...reportFilter, endDate: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-              />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPrintModal({ isOpen: true, type: 'attendance' })}
-                className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Printer className="w-4 h-4" />
-                <span>طباعة ومعاينة التقرير الرسمي</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Generated Report Table Display */}
-          <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs">
-            <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-              <h4 className="font-bold text-sm text-slate-800">
-                نتائج التقرير للفترة: {reportFilter.startDate} إلى {reportFilter.endDate}
-              </h4>
-              <span className="text-xs text-slate-500 font-mono-num">
-                {filteredReportRecords.length} سجلات
-              </span>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-right text-xs sm:text-sm">
-                <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                  <tr>
-                    <th className="p-3">تاريخ</th>
-                    <th className="p-3">الموظف</th>
-                    <th className="p-3">تحقق في (حضور)</th>
-                    <th className="p-3">الدفع (انصراف)</th>
-                    <th className="p-3">متأخر (بالثواني)</th>
-                    <th className="p-3">المغادرة المبكرة</th>
-                    <th className="p-3 text-center">حالة</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {filteredReportRecords.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="p-8 text-center text-slate-500">
-                        <div className="flex flex-col items-center justify-center space-y-2">
-                          <FileText className="w-8 h-8 text-slate-300" />
-                          <p className="font-bold text-slate-700">لا توجد بيانات مطابقة للتقرير في الفترة المحددة</p>
-                          <p className="text-xs text-slate-400">
-                            يرجى تغيير معايير البحث أو تسجيل حركات حضور جديدة
-                          </p>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredReportRecords.map((r) => (
-                      <tr key={r.id} className="hover:bg-slate-50/70">
-                        <td className="p-3 font-mono-num">{r.date}</td>
-                        <td className="p-3 font-bold">{r.employeeName}</td>
-                        <td className="p-3 font-mono-num text-emerald-800">{r.checkInTime || '—'}</td>
-                        <td className="p-3 font-mono-num text-amber-800">{r.checkOutTime || '—'}</td>
-                        <td className="p-3 font-mono-num">
-                          {r.lateExcused ? (
-                            <span className="text-emerald-600 text-xs font-bold">معفى</span>
-                          ) : r.lateSeconds > 0 ? (
-                            <span className="text-red-600 font-bold">
-                              {formatSecondsDigital(r.lateSeconds)}
-                            </span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                        <td className="p-3 font-mono-num">
-                          {r.earlyDepartureSeconds > 0 ? (
-                            <span className="text-amber-600 font-bold">
-                              {formatSecondsDigital(r.earlyDepartureSeconds)}
-                            </span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                        <td className="p-3 text-center">
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                              r.status === 'present'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : r.status === 'late'
-                                ? 'bg-amber-100 text-amber-800'
-                                : r.status === 'on_leave'
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-red-100 text-red-800'
-                            }`}
-                          >
-                            {r.status === 'present' ? 'حاضر' : r.status === 'late' ? 'متأخر' : r.status === 'on_leave' ? 'إجازة' : 'غائب'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-slate-800">
+                      {req.employeeName}
+                    </span>
+                    <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
+                      إجازة {req.type} ({req.daysCount} أيام)
+                    </span>
+                    <span className="text-[11px] text-slate-400 font-mono">
+                      {req.startDate} إلى {req.endDate}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-1">
+                    السبب: {req.reason}
+                  </p>
+                  {req.adminResponseNote && (
+                    <p className="text-xs text-emerald-700 mt-1 font-semibold">
+                      رد الإدارة: {req.adminResponseNote}
+                    </p>
                   )}
-                </tbody>
-              </table>
-            </div>
+                </div>
 
-            {/* Totals at End of Report as requested in Section 12 */}
-            <div className="bg-gradient-to-r from-emerald-50 to-amber-50 p-5 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="bg-white p-3.5 rounded-xl border border-emerald-200">
-                <span className="text-xs text-slate-500 font-bold block mb-1">
-                  إجمالي وقت التأخير المحسوب:
-                </span>
-                <span className="text-base sm:text-lg font-black font-mono-num text-red-700">
-                  {formatSecondsToArabic(reportTotalLateSeconds)}
-                </span>
+                <div className="flex items-center gap-2">
+                  {req.status === 'pending' ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => onUpdateLeaveStatus(req.id, 'approved', 'تمت الموافقة من المدير')}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-2xs flex items-center gap-1 cursor-pointer"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>موافقة</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onUpdateLeaveStatus(req.id, 'rejected', 'نعتذر لحاجة العمل الماسة')}
+                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-2xs flex items-center gap-1 cursor-pointer"
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                        <span>رفض</span>
+                      </button>
+                    </>
+                  ) : (
+                    <span
+                      className={`text-xs font-bold px-3 py-1 rounded-xl ${
+                        req.status === 'approved'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-rose-100 text-rose-800'
+                      }`}
+                    >
+                      {req.status === 'approved' ? 'معتمدة ومقبولة' : 'مرفوضة'}
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="bg-white p-3.5 rounded-xl border border-amber-200">
-                <span className="text-xs text-slate-500 font-bold block mb-1">
-                  إجمالي المغادرة المبكرة:
-                </span>
-                <span className="text-base sm:text-lg font-black font-mono-num text-amber-700">
-                  {formatSecondsToArabic(reportTotalEarlySeconds)}
-                </span>
-              </div>
-            </div>
-          </div>
+            ))
+          )}
         </div>
       )}
 
-      {/* Tab: 🏖️ تقرير الإجازات (Section 13) */}
-      {activeTab === 'leave_report' && (
-        <div className="space-y-4">
-          <div className="bg-white rounded-3xl p-4 border border-slate-200 shadow-xs flex items-center justify-between">
-            <div>
-              <h3 className="font-bold text-slate-800 text-sm">
-                تقرير إجازات الموظفين المنفصل
-              </h3>
-              <p className="text-xs text-slate-500">
-                يشمل نوع الإجازة، والتواريخ، والسبب، والموازنة قبل وبعد الإجازة
-              </p>
-            </div>
+      {/* 3. Admin Employees */}
+      {adminTab === 'employees' && (
+        <div className="bg-white rounded-3xl p-4 sm:p-6 shadow-sm border border-slate-100">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-black text-slate-800 text-sm sm:text-base flex items-center gap-2">
+              <Users className="w-4 h-4 text-emerald-600" />
+              <span>قائمة الموظفين المسجلين</span>
+            </h3>
             <button
-              onClick={() => setPrintModal({ isOpen: true, type: 'leaves' })}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-xs transition-colors flex items-center gap-2 cursor-pointer"
+              type="button"
+              onClick={() => setShowAddEmpModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-xs cursor-pointer"
             >
-              <Printer className="w-4 h-4" />
-              <span>طباعة وتصدير تقرير الإجازات</span>
+              <PlusCircle className="w-4 h-4" />
+              <span>إضافة موظف جديد</span>
             </button>
           </div>
 
-          <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-right text-xs sm:text-sm">
-                <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                  <tr>
-                    <th className="p-3.5">اسم الموظف</th>
-                    <th className="p-3.5">نوع الإجازة</th>
-                    <th className="p-3.5">تاريخ البدء</th>
-                    <th className="p-3.5">تاريخ الانتهاء</th>
-                    <th className="p-3.5 text-center">الأيام</th>
-                    <th className="p-3.5">سبب الإجازة</th>
-                    <th className="p-3.5 text-center">حالة الطلب</th>
-                    <th className="p-3.5 text-center">الموازنة قبل</th>
-                    <th className="p-3.5 text-center">الرصيد بعد</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {filteredLeaveReport.length === 0 ? (
-                    <tr>
-                      <td colSpan={9} className="p-8 text-center text-slate-500">
-                        <div className="flex flex-col items-center justify-center space-y-2">
-                          <Palmtree className="w-8 h-8 text-slate-300" />
-                          <p className="font-bold text-slate-700">لا توجد طلبات إجازة مطابقة للتقرير</p>
-                          <p className="text-xs text-slate-400">
-                            ستظهر تفاصيل الإجازات وموازنات الرصيد هنا عند تقديم طلبات إجازة
-                          </p>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredLeaveReport.map((l) => (
-                      <tr key={l.id} className="hover:bg-slate-50/70">
-                        <td className="p-3.5 font-bold text-slate-900">{l.employeeName}</td>
-                        <td className="p-3.5 font-semibold text-emerald-800">{l.leaveType}</td>
-                        <td className="p-3.5 font-mono-num">{l.startDate}</td>
-                        <td className="p-3.5 font-mono-num">{l.endDate}</td>
-                        <td className="p-3.5 text-center font-bold">{l.daysCount} يوم</td>
-                        <td className="p-3.5 text-slate-600 max-w-xs">{l.reason}</td>
-                        <td className="p-3.5 text-center">
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-xs font-bold inline-block ${
-                              l.status === 'approved'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : l.status === 'rejected'
-                                ? 'bg-red-100 text-red-800'
-                                : 'bg-amber-100 text-amber-800'
-                            }`}
-                          >
-                            {l.status === 'approved'
-                              ? 'موافقة'
-                              : l.status === 'rejected'
-                              ? 'مرفوض'
-                              : 'قيد المراجعة'}
-                          </span>
-                        </td>
-                        <td className="p-3.5 text-center font-mono-num">{l.balanceBefore ?? '—'}</td>
-                        <td className="p-3.5 text-center font-mono-num font-bold text-emerald-700">
-                          {l.balanceAfter ?? '—'}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {employees.map((emp) => (
+              <div
+                key={emp.id}
+                className="p-3.5 rounded-2xl border border-slate-200 bg-white flex items-center justify-between"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-800 font-black flex items-center justify-center text-sm">
+                    {emp.name.charAt(0)}
+                  </div>
+                  <div>
+                    <div className="font-bold text-xs sm:text-sm text-slate-800">
+                      {emp.name}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      {emp.department} • كود: {emp.code}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-left text-xs font-mono font-bold text-emerald-700">
+                  {emp.annualLeaveBalance - emp.usedLeaveBalance} يوم إجازة
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
 
-      {/* Tab: ⚙️ إعدادات النظام (System Settings - Section 15) */}
-      {activeTab === 'settings' && (
-        <form onSubmit={handleSaveSettings} className="space-y-6">
-          {/* 🏢 إعدادات المؤسسة */}
-          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
-            <h4 className="font-bold text-base text-slate-800 border-b border-slate-100 pb-2 flex items-center gap-2">
-              <span className="text-emerald-600 font-bold">🏢</span>
-              <span>إعدادات المؤسسة والهوية البصرية</span>
-            </h4>
+      {/* 4. Admin Settings */}
+      {adminTab === 'settings' && (
+        <div className="bg-white rounded-3xl p-5 sm:p-7 shadow-sm border border-slate-100">
+          <h3 className="font-black text-slate-800 text-base mb-1 flex items-center gap-2">
+            <Settings className="w-5 h-5 text-emerald-600" />
+            <span>إعدادات الدوام والموقع الجغرافي</span>
+          </h3>
+          <p className="text-xs text-slate-500 mb-5">
+            ضبط ساعات العمل الرسمية بنظام 12 ساعة، ونطاق المقر الرئيسي لمؤسسة الفجر
+          </p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  اسم المنظمة / المؤسسة
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={tempSettings.orgName}
-                  onChange={(e) => setTempSettings({ ...tempSettings, orgName: e.target.value })}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                />
-              </div>
-
-              {/* Logo Upload as specified in Section 15 */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  تحميل شعار المنظمة (يُستخدم تلقائياً في التقارير واللوحات والطباعة)
-                </label>
-                <div className="flex items-center gap-3">
-                  <div className="w-14 h-14 rounded-2xl border border-emerald-300 bg-white p-1 shadow-2xs shrink-0 flex items-center justify-center">
-                    <img
-                      src={logoPreview}
-                      alt="Logo preview"
-                      className="w-full h-full object-contain"
-                    />
-                  </div>
-                  <input
-                    type="file"
-                    id="admin-logo-upload"
-                    accept="image/*"
-                    onChange={handleLogoUpload}
-                    className="hidden"
-                  />
-                  <label
-                    htmlFor="admin-logo-upload"
-                    className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-xl border border-emerald-200 transition-colors flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Upload className="w-4 h-4 text-emerald-600" />
-                    <span>رفع شعار جديد</span>
-                  </label>
-                </div>
-              </div>
+          {settingsSaved && (
+            <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-bold flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>تم حفظ الإعدادات وتطبيقها بنجاح</span>
             </div>
+          )}
 
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                معلومات ورسالة المنظمة
-              </label>
-              <textarea
-                rows={2}
-                value={tempSettings.orgInfo}
-                onChange={(e) => setTempSettings({ ...tempSettings, orgInfo: e.target.value })}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-              />
-            </div>
-          </div>
-
-          {/* ⏰ إعدادات ساعات العمل */}
-          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
-            <h4 className="font-bold text-base text-slate-800 border-b border-slate-100 pb-2 flex items-center gap-2">
-              <span className="text-amber-600 font-bold">⏰</span>
-              <span>إعدادات ساعات الدوام الرسمي وفترة السماح</span>
-            </h4>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <form onSubmit={handleSaveSettings} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  وقت بدء العمل الرسمي
+                  بداية الدوام الرسمي
                 </label>
                 <input
                   type="time"
-                  step="1"
-                  required
-                  value={tempSettings.workStartTime}
-                  onChange={(e) => setTempSettings({ ...tempSettings, workStartTime: e.target.value })}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono-num focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  وقت انتهاء العمل الرسمي
+                  نهاية الدوام الرسمي
                 </label>
                 <input
                   type="time"
-                  step="1"
-                  required
-                  value={tempSettings.workEndTime}
-                  onChange={(e) => setTempSettings({ ...tempSettings, workEndTime: e.target.value })}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono-num focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  فترة سماح للوصول المتأخر (بالدقائق)
+                  فترة السماح بالتأخير (دقائق)
                 </label>
                 <input
                   type="number"
-                  min="0"
-                  max="60"
-                  value={tempSettings.lateGracePeriodMinutes}
-                  onChange={(e) =>
-                    setTempSettings({
-                      ...tempSettings,
-                      lateGracePeriodMinutes: Number(e.target.value),
-                    })
-                  }
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono-num focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  value={graceMinutes}
+                  onChange={(e) => setGraceMinutes(Number(e.target.value))}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
             </div>
 
-            <div className="pt-1">
-              <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={tempSettings.allowEarlyCheckIn}
-                  onChange={(e) =>
-                    setTempSettings({ ...tempSettings, allowEarlyCheckIn: e.target.checked })
-                  }
-                  className="rounded-md text-emerald-600 accent-emerald-600"
-                />
-                <span>السماح بتسجيل الوصول المبكر قبل موعد الدوام الرسمي</span>
-              </label>
-            </div>
-          </div>
-
-          {/* 📍 إعدادات الموقع ونصف قطر الـ GPS والتحديد التلقائي */}
-          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+            {/* Location configuration */}
+            <div className="p-4 bg-emerald-50/60 border border-emerald-100 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div>
-                <h4 className="font-bold text-base text-slate-800 flex items-center gap-2">
-                  <span className="text-emerald-600 font-bold">📍</span>
-                  <span>إعدادات موقع المؤسسة ونظام تحديد المواقع (GPS)</span>
-                </h4>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  يمكن تحديد الموقع تلقائياً حسب تواجدك كمدير للنظام أو يدوياً عبر الخريطة
-                </p>
+                <span className="font-bold text-xs sm:text-sm text-emerald-950 block">
+                  موقع المقر ونطاق البصمة (GPS)
+                </span>
+                <span className="text-xs text-emerald-800">
+                  {settings.officeLocation.address} (نطاق {settings.officeLocation.radiusMeters} متر)
+                </span>
               </div>
-
-              <div className="flex items-center gap-2 flex-wrap">
-                {/* Open Map & Auto-Locate Button */}
-                <button
-                  type="button"
-                  id="detect-and-open-map-btn"
-                  onClick={() => {
-                    setAutoLocateMap(true);
-                    setShowMapPicker(true);
-                  }}
-                  className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer"
-                  title="فتح الخريطة وتحديد موقع المقر الفعلي مباشرة"
-                >
-                  <LocateFixed className="w-4 h-4 text-amber-300 animate-pulse" />
-                  <span>فتح الخريطة وتحديد الموقع</span>
-                </button>
-
-                {/* Instant GPS Detection without map */}
-                <button
-                  type="button"
-                  id="detect-admin-location-btn"
-                  onClick={() => handleDetectCurrentLocation(true)}
-                  disabled={isDetectingLocation}
-                  className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
-                  title="تحديث الإحداثيات فوراً بدون فتح الخريطة"
-                >
-                  <Navigation className={`w-3.5 h-3.5 text-emerald-600 ${isDetectingLocation ? 'animate-spin' : ''}`} />
-                  <span>{isDetectingLocation ? 'جاري الالتقاط...' : 'تحديث صامت'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAutoLocateMap(false);
-                    setShowMapPicker(true);
-                  }}
-                  className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold border border-slate-200 transition-colors flex items-center gap-1.5 cursor-pointer"
-                >
-                  <MapPin className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>استعراض الخريطة</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Auto Follow Toggle Feature */}
-            <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl bg-emerald-600 text-white mt-0.5 shrink-0">
-                  <Radio className="w-4 h-4 animate-pulse" />
-                </div>
-                <div>
-                  <h5 className="text-xs sm:text-sm font-extrabold text-emerald-950 flex items-center gap-2">
-                    <span>التحديد التلقائي المستمر حسب تواجد مدير النظام</span>
-                    <span className="text-[10px] bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded-full font-bold">
-                      ميزة ذكية
-                    </span>
-                  </h5>
-                  <p className="text-xs text-emerald-800/80 leading-relaxed mt-0.5">
-                    عند تفعيل هذا الخيار، يتم تحديث موقع مقر الحضور تلقائياً بمجرد فتح مدير النظام للوحة التحكم ليتطابق مع مكان تواجده، وتعتمد السحابة موقعه كمقر رسمي لبصمة الموظفين.
-                  </p>
-                  {tempSettings.lastLocationSync && (
-                    <div className="text-[11px] font-bold text-emerald-700 mt-1 flex items-center gap-1">
-                      <span>✓ آخر تحديث للموقع من جهاز المدير:</span>
-                      <span className="font-mono-num">{tempSettings.lastLocationSync}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                <input
-                  type="checkbox"
-                  checked={tempSettings.autoFollowAdminLocation ?? true}
-                  onChange={(e) =>
-                    setTempSettings({
-                      ...tempSettings,
-                      autoFollowAdminLocation: e.target.checked,
-                    })
-                  }
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-              </label>
-            </div>
-
-            {/* Notification messages for GPS */}
-            {locationSuccessMsg && (
-              <div className="p-3 bg-emerald-100/80 border border-emerald-300 text-emerald-900 rounded-xl text-xs font-bold flex items-center gap-2 animate-fadeIn">
-                <Check className="w-4 h-4 text-emerald-700 shrink-0" />
-                <span>{locationSuccessMsg}</span>
-              </div>
-            )}
-            {locationErrorMsg && (
-              <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-bold flex items-center gap-2 animate-fadeIn">
-                <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
-                <span>{locationErrorMsg}</span>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  خط العرض (Latitude)
-                </label>
-                <input
-                  type="number"
-                  step="any"
-                  value={tempSettings.orgLocation.lat}
-                  onChange={(e) =>
-                    setTempSettings({
-                      ...tempSettings,
-                      orgLocation: {
-                        ...tempSettings.orgLocation,
-                        lat: parseFloat(e.target.value) || 0,
-                      },
-                    })
-                  }
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono-num focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  خط الطول (Longitude)
-                </label>
-                <input
-                  type="number"
-                  step="any"
-                  value={tempSettings.orgLocation.lng}
-                  onChange={(e) =>
-                    setTempSettings({
-                      ...tempSettings,
-                      orgLocation: {
-                        ...tempSettings.orgLocation,
-                        lng: parseFloat(e.target.value) || 0,
-                      },
-                    })
-                  }
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono-num focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  نصف القطر المسموح للتسجيل (بالأمتار)
-                </label>
-                <input
-                  type="number"
-                  min="10"
-                  max="5000"
-                  value={tempSettings.gpsRadiusMeters}
-                  onChange={(e) =>
-                    setTempSettings({
-                      ...tempSettings,
-                      gpsRadiusMeters: Number(e.target.value),
-                    })
-                  }
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono-num focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                العنوان الميداني للمقر
-              </label>
-              <input
-                type="text"
-                value={tempSettings.orgLocation.address}
-                onChange={(e) =>
-                  setTempSettings({
-                    ...tempSettings,
-                    orgLocation: {
-                      ...tempSettings.orgLocation,
-                      address: e.target.value,
-                    },
-                  })
-                }
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-              />
-            </div>
-          </div>
-
-          {/* 👨💼 إعدادات المسؤول */}
-          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
-            <h4 className="font-bold text-base text-slate-800 border-b border-slate-100 pb-2 flex items-center gap-2">
-              <span className="text-amber-600 font-bold">👨💼</span>
-              <span>إعدادات حساب المسؤول (الأولي: fjr / 316501)</span>
-            </h4>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  تغيير اسم مستخدم المسؤول
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={tempSettings.adminUsername}
-                  onChange={(e) =>
-                    setTempSettings({ ...tempSettings, adminUsername: e.target.value })
-                  }
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono-num focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  تغيير كلمة مرور المسؤول
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={tempSettings.adminPassword}
-                  onChange={(e) =>
-                    setTempSettings({ ...tempSettings, adminPassword: e.target.value })
-                  }
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono-num focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* 🧹 منطقة تصفير وتفريغ البيانات المخزنة */}
-          <div className="bg-white rounded-3xl p-6 border border-red-200 shadow-xs space-y-4">
-            <h4 className="font-bold text-base text-red-700 border-b border-red-100 pb-2 flex items-center gap-2">
-              <Trash2 className="w-5 h-5 text-red-600" />
-              <span>إدارة وتصفير بيانات النظام</span>
-            </h4>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              يمكنك في أي وقت تصفير كافة بيانات الموظفين المسجلين، وسجلات الحضور والانصراف، وطلبات الإجازات، وطلبات الأعذار، وسجل التدقيق، لتبدأ قاعدة البيانات نظيفة ومصَفّرة تماماً لتسجيل موظفي المنظمة الفعليين.
-            </p>
-            <div className="pt-1">
               <button
                 type="button"
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      'تأكيد تصفير البيانات: هل أنت متأكد من رغبتك في حذف جميع سجلات الموظفين والحركات وتصفير النظام بالكامل؟ لا يمكن التراجع عن هذا الإجراء.'
-                    )
-                  ) {
-                    if (onResetAllData) {
-                      onResetAllData();
-                    } else {
-                      Storage.zeroOutAllData();
-                      window.location.reload();
-                    }
-                    alert('تم تصفير كافة البيانات المخزنة بنجاح.');
-                  }
-                }}
-                className="px-5 py-2.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 font-bold rounded-xl text-xs transition-colors flex items-center gap-2 cursor-pointer"
+                onClick={onOpenLocationPicker}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-2xs flex items-center gap-1.5 cursor-pointer"
               >
-                <Trash2 className="w-4 h-4 text-red-600" />
-                <span>تصفير وتفريغ كافة البيانات المخزنة الآن</span>
+                <MapPin className="w-4 h-4 text-amber-300" />
+                <span>تعديل موقع المقر على الخريطة</span>
               </button>
             </div>
-          </div>
 
-          <div className="pt-2">
-            <button
-              type="submit"
-              className="w-full sm:w-auto px-8 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <Check className="w-5 h-5" />
-              <span>حفظ جميع إعدادات النظام وتطبيقها فوراً</span>
-            </button>
-          </div>
-        </form>
-      )}
-
-      {/* Tab: 📜 سجل النشاط والتدقيق (Activity Log - Section 17) */}
-      {activeTab === 'audit_logs' && (
-        <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs">
-          <div className="p-4 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between">
-            <div>
-              <h3 className="font-bold text-sm text-slate-800 flex items-center gap-2">
-                <History className="w-4 h-4 text-emerald-600" />
-                <span>سجل النشاط وتدقيق العمليات (Audit Trail)</span>
-              </h3>
-              <p className="text-xs text-slate-500">
-                يتم تسجيل كل تعديل أو حذف في النظام آلياً لضمان النزاهة والشفافية
-              </p>
+            <div className="flex justify-end pt-3">
+              <button
+                type="submit"
+                className="px-6 py-2.5 bg-slate-900 hover:bg-black text-white font-bold text-xs sm:text-sm rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                حفظ التعديلات
+              </button>
             </div>
-            <span className="text-xs text-slate-500 font-mono-num">
-              إجمالي السجلات: {activityLogs.length}
-            </span>
-          </div>
-
-          <div className="divide-y divide-slate-100">
-            {activityLogs.length === 0 ? (
-              <div className="p-8 text-center text-slate-500">
-                <div className="flex flex-col items-center justify-center space-y-2">
-                  <History className="w-8 h-8 text-slate-300" />
-                  <p className="font-bold text-slate-700">سجل التدقيق فارغ حالياً</p>
-                  <p className="text-xs text-slate-400">
-                    يتم تسجيل كل إجراء إداري وحركة تعديل تلقائياً في هذا السجل فور حدوثها
-                  </p>
-                </div>
-              </div>
-            ) : (
-              activityLogs.map((log) => (
-                <div key={log.id} className="p-4 hover:bg-slate-50/70 transition-colors flex items-start justify-between gap-4">
-                  <div className="space-y-1 text-right">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-900 bg-slate-100 px-2.5 py-0.5 rounded-md border border-slate-200">
-                        المسؤول: {log.adminUsername}
-                      </span>
-                      <strong className="text-sm font-bold text-emerald-950">{log.action}</strong>
-                    </div>
-                    <p className="text-xs text-slate-600">{log.details}</p>
-                  </div>
-                  <div className="text-left shrink-0 font-mono-num text-[11px] text-slate-400">
-                    <div className="font-semibold text-slate-600">{log.date}</div>
-                    <div>{log.time}</div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+          </form>
         </div>
       )}
 
-      {/* Map Picker Modal */}
-      {showMapPicker && (
-        <MapLocationPicker
-          initialLat={tempSettings.orgLocation.lat}
-          initialLng={tempSettings.orgLocation.lng}
-          initialRadius={tempSettings.gpsRadiusMeters}
-          initialAddress={tempSettings.orgLocation.address}
-          autoLocateOnOpen={autoLocateMap}
-          onSave={(loc) => {
-            const updated = {
-              ...tempSettings,
-              orgLocation: {
-                lat: loc.lat,
-                lng: loc.lng,
-                address: loc.address,
-              },
-              gpsRadiusMeters: loc.radius,
-              lastLocationSync: `${formatDateNumeric(new Date())} ${getCurrentTime12h(new Date())}`,
-            };
-            setTempSettings(updated);
-            onUpdateSettings(updated);
-            onLogActivity(
-              'تحديث وتثبيت موقع المقر على الخريطة',
-              `تم تعيين إحداثيات المقر الجديد ونصف القطر إلى ${loc.radius} متر (${loc.address})`
-            );
-            setShowMapPicker(false);
-            setAutoLocateMap(false);
-          }}
-          onClose={() => {
-            setShowMapPicker(false);
-            setAutoLocateMap(false);
-          }}
-        />
-      )}
-
-      {/* Print Report Modal */}
-      {printModal.isOpen && (
-        <PrintReportModal
-          type={printModal.type}
-          settings={settings}
-          records={filteredReportRecords}
-          leaves={filteredLeaveReport}
-          employeeName={
-            reportFilter.employeeId === 'all'
-              ? 'جميع الموظفين'
-              : employees.find((e) => e.id === reportFilter.employeeId)?.name
-          }
-          startDate={reportFilter.startDate}
-          endDate={reportFilter.endDate}
-          onClose={() => setPrintModal({ ...printModal, isOpen: false })}
-        />
-      )}
-
-      {/* Employee Add / Edit Modal */}
-      {employeeModal.isOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl border border-slate-200 overflow-hidden my-auto">
-            <div className="p-4 sm:p-5 bg-gradient-to-r from-emerald-700 to-emerald-600 text-white flex items-center justify-between">
-              <h3 className="font-bold text-base sm:text-lg">
-                {employeeModal.mode === 'add' ? 'إضافة موظف جديد للمؤسسة' : 'تعديل بيانات الموظف'}
-              </h3>
+      {/* Add Employee Modal */}
+      {showAddEmpModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl border border-slate-100">
+            <div className="p-4 bg-emerald-800 text-white flex items-center justify-between">
+              <h4 className="font-bold text-sm flex items-center gap-2">
+                <PlusCircle className="w-4 h-4 text-amber-300" />
+                <span>إضافة موظف جديد لمؤسسة الفجر</span>
+              </h4>
               <button
-                onClick={() => setEmployeeModal({ isOpen: false, mode: 'add', data: {} })}
-                className="p-1 rounded-lg hover:bg-white/20 text-white cursor-pointer"
+                type="button"
+                onClick={() => setShowAddEmpModal(false)}
+                className="text-white hover:bg-white/20 p-1 rounded-full cursor-pointer"
               >
                 <XCircle className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveEmployee} className="p-5 sm:p-6 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">اسم الموظف</label>
-                  <input
-                    type="text"
-                    required
-                    value={employeeModal.data.name || ''}
-                    onChange={(e) =>
-                      setEmployeeModal({
-                        ...employeeModal,
-                        data: { ...employeeModal.data, name: e.target.value },
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">نوع الوظيفة</label>
-                  <input
-                    type="text"
-                    required
-                    value={employeeModal.data.jobTitle || ''}
-                    onChange={(e) =>
-                      setEmployeeModal({
-                        ...employeeModal,
-                        data: { ...employeeModal.data, jobTitle: e.target.value },
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">رقم التليفون</label>
-                  <input
-                    type="tel"
-                    required
-                    value={employeeModal.data.phone || ''}
-                    onChange={(e) =>
-                      setEmployeeModal({
-                        ...employeeModal,
-                        data: { ...employeeModal.data, phone: e.target.value },
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-mono-num focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">تاريخ بدء العمل</label>
-                  <input
-                    type="date"
-                    required
-                    value={employeeModal.data.startDate || formatDateIso(new Date())}
-                    onChange={(e) =>
-                      setEmployeeModal({
-                        ...employeeModal,
-                        data: { ...employeeModal.data, startDate: e.target.value },
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">اسم المستخدم للدخول</label>
-                  <input
-                    type="text"
-                    required
-                    value={employeeModal.data.username || ''}
-                    onChange={(e) =>
-                      setEmployeeModal({
-                        ...employeeModal,
-                        data: { ...employeeModal.data, username: e.target.value },
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-mono-num focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">كلمة المرور</label>
-                  <input
-                    type="text"
-                    required
-                    value={employeeModal.data.password || ''}
-                    onChange={(e) =>
-                      setEmployeeModal({
-                        ...employeeModal,
-                        data: { ...employeeModal.data, password: e.target.value },
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-mono-num focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">رصيد الإجازة السنوية</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={employeeModal.data.annualLeaveBalance ?? 30}
-                    onChange={(e) =>
-                      setEmployeeModal({
-                        ...employeeModal,
-                        data: {
-                          ...employeeModal.data,
-                          annualLeaveBalance: Number(e.target.value),
-                        },
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-mono-num focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">الإجازات المستخدمة</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={employeeModal.data.usedLeaveBalance ?? 0}
-                    onChange={(e) =>
-                      setEmployeeModal({
-                        ...employeeModal,
-                        data: {
-                          ...employeeModal.data,
-                          usedLeaveBalance: Number(e.target.value),
-                        },
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-mono-num focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">حالة الحساب</label>
-                  <select
-                    value={employeeModal.data.status || 'active'}
-                    onChange={(e) =>
-                      setEmployeeModal({
-                        ...employeeModal,
-                        data: {
-                          ...employeeModal.data,
-                          status: e.target.value as 'active' | 'inactive',
-                        },
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  >
-                    <option value="active">نشط</option>
-                    <option value="inactive">غير نشط (معطل)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setEmployeeModal({ isOpen: false, mode: 'add', data: {} })}
-                  className="px-4 py-2 text-xs sm:text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-xs transition-colors cursor-pointer"
-                >
-                  حفظ البيانات
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Attendance Record Edit Modal */}
-      {attendanceEditModal.isOpen && attendanceEditModal.record && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="p-4 bg-emerald-700 text-white flex items-center justify-between">
-              <h3 className="font-bold text-sm sm:text-base">
-                تعديل سجل الحضور والانصراف
-              </h3>
-              <button
-                onClick={() => setAttendanceEditModal({ isOpen: false, record: null })}
-                className="p-1 text-white hover:bg-white/20 rounded-lg cursor-pointer"
-              >
-                <XCircle className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveAttendanceEdit} className="p-5 space-y-4">
+            <form onSubmit={handleCreateEmployee} className="p-5 space-y-3.5">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">اسم الموظف</label>
                 <input
                   type="text"
-                  disabled
-                  value={attendanceEditModal.record.employeeName || ''}
-                  className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-xs sm:text-sm text-slate-600"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">التاريخ</label>
-                <input
-                  type="date"
                   required
-                  value={attendanceEditModal.record.date || ''}
-                  onChange={(e) =>
-                    setAttendanceEditModal({
-                      ...attendanceEditModal,
-                      record: { ...attendanceEditModal.record, date: e.target.value },
-                    })
-                  }
+                  value={newEmpName}
+                  onChange={(e) => setNewEmpName(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm"
+                  placeholder="مثال: أحمد خالد البار"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">وقت الحضور</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">الكود / الرمز</label>
                   <input
-                    type="time"
-                    step="1"
-                    value={attendanceEditModal.record.checkInTime || ''}
-                    onChange={(e) => {
-                      const newTime = e.target.value;
-                      const late = calculateLateSeconds(newTime, settings.workStartTime, settings.lateGracePeriodMinutes);
-                      setAttendanceEditModal({
-                        ...attendanceEditModal,
-                        record: {
-                          ...attendanceEditModal.record,
-                          checkInTime: newTime,
-                          lateSeconds: late,
-                          status: late > 0 ? 'late' : 'present',
-                        },
-                      });
-                    }}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-mono-num"
+                    type="text"
+                    required
+                    value={newEmpCode}
+                    onChange={(e) => setNewEmpCode(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-mono"
+                    placeholder="مثال: 1005"
                   />
                 </div>
-
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">وقت الانصراف</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">الهاتف</label>
                   <input
-                    type="time"
-                    step="1"
-                    value={attendanceEditModal.record.checkOutTime || ''}
-                    onChange={(e) =>
-                      setAttendanceEditModal({
-                        ...attendanceEditModal,
-                        record: {
-                          ...attendanceEditModal.record,
-                          checkOutTime: e.target.value,
-                        },
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-mono-num"
+                    type="text"
+                    value={newEmpPhone}
+                    onChange={(e) => setNewEmpPhone(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-mono"
+                    placeholder="770000000"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">الحالة</label>
-                <select
-                  value={attendanceEditModal.record.status || 'present'}
-                  onChange={(e) =>
-                    setAttendanceEditModal({
-                      ...attendanceEditModal,
-                      record: {
-                        ...attendanceEditModal.record,
-                        status: e.target.value as any,
-                      },
-                    })
-                  }
+                <label className="block text-xs font-bold text-slate-700 mb-1">القسم</label>
+                <input
+                  type="text"
+                  value={newEmpDept}
+                  onChange={(e) => setNewEmpDept(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm"
-                >
-                  <option value="present">حاضر</option>
-                  <option value="late">متأخر</option>
-                  <option value="absent">غائب</option>
-                  <option value="on_leave">في إجازة</option>
-                </select>
+                  placeholder="مثال: الشؤون المالية"
+                />
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">رصيد الإجازات السنوية</label>
+                <input
+                  type="number"
+                  value={newEmpLeaves}
+                  onChange={(e) => setNewEmpLeaves(Number(e.target.value))}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-mono"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setAttendanceEditModal({ isOpen: false, record: null })}
-                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                  onClick={() => setShowAddEmpModal(false)}
+                  className="px-3.5 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
                 >
                   إلغاء
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl cursor-pointer"
+                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-2xs cursor-pointer"
                 >
-                  تأكيد التعديل وتدوين السجل
+                  إضافة وحفظ
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* View Employee Profile & History Modal */}
-      {viewEmployeeModal.isOpen && viewEmployeeModal.employee && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl w-full max-w-3xl shadow-2xl border border-slate-200 overflow-hidden my-auto max-h-[92vh] flex flex-col">
-            <div className="p-4 bg-emerald-700 text-white flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-base sm:text-lg">
-                  ملف الموظف: {viewEmployeeModal.employee.name}
-                </h3>
-                <span className="text-xs text-emerald-100">
-                  {viewEmployeeModal.employee.jobTitle} • {viewEmployeeModal.employee.phone}
-                </span>
-              </div>
-              <button
-                onClick={() => setViewEmployeeModal({ isOpen: false, employee: null, tab: 'profile' })}
-                className="p-1 text-white hover:bg-white/20 rounded-lg cursor-pointer"
-              >
-                <XCircle className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Sub Tabs */}
-            <div className="flex border-b border-slate-200 bg-slate-50 px-4 pt-2 gap-2">
-              {[
-                { id: 'profile', label: 'المعلومات الشخصية' },
-                { id: 'attendance', label: 'سجل الحضور' },
-                { id: 'leaves', label: 'سجل الإجازات' },
-                { id: 'excuses', label: 'طلبات الأعذار' },
-              ].map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() =>
-                    setViewEmployeeModal({
-                      ...viewEmployeeModal,
-                      tab: t.id as any,
-                    })
-                  }
-                  className={`px-3 py-2 text-xs font-bold border-b-2 transition-colors cursor-pointer ${
-                    viewEmployeeModal.tab === t.id
-                      ? 'border-emerald-600 text-emerald-800 bg-white rounded-t-lg'
-                      : 'border-transparent text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="p-6 overflow-y-auto flex-1">
-              {viewEmployeeModal.tab === 'profile' && (
-                <div className="space-y-4 text-xs sm:text-sm">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                      <span className="text-slate-400 block mb-1">اسم الموظف</span>
-                      <strong className="text-slate-800">{viewEmployeeModal.employee.name}</strong>
-                    </div>
-                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                      <span className="text-slate-400 block mb-1">نوع الوظيفة</span>
-                      <strong className="text-slate-800">{viewEmployeeModal.employee.jobTitle}</strong>
-                    </div>
-                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                      <span className="text-slate-400 block mb-1">رقم الهاتف</span>
-                      <strong className="text-slate-800 font-mono-num">{viewEmployeeModal.employee.phone}</strong>
-                    </div>
-                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                      <span className="text-slate-400 block mb-1">تاريخ البدء</span>
-                      <strong className="text-slate-800 font-mono-num">{viewEmployeeModal.employee.startDate}</strong>
-                    </div>
-                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                      <span className="text-slate-400 block mb-1">اسم المستخدم</span>
-                      <strong className="text-emerald-800 font-mono-num">{viewEmployeeModal.employee.username}</strong>
-                    </div>
-                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                      <span className="text-slate-400 block mb-1">حالة الحساب</span>
-                      <strong className={viewEmployeeModal.employee.status === 'active' ? 'text-emerald-700' : 'text-slate-500'}>
-                        {viewEmployeeModal.employee.status === 'active' ? 'نشط' : 'معطل'}
-                      </strong>
-                    </div>
-                  </div>
-
-                  <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 grid grid-cols-3 gap-3 text-center">
-                    <div>
-                      <span className="text-xs text-slate-500 block">الرصيد السنوي</span>
-                      <span className="text-xl font-bold font-mono-num text-slate-800">
-                        {viewEmployeeModal.employee.annualLeaveBalance}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-xs text-amber-700 block">المستخدم</span>
-                      <span className="text-xl font-bold font-mono-num text-amber-700">
-                        {viewEmployeeModal.employee.usedLeaveBalance}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-xs text-emerald-700 block">المتبقي</span>
-                      <span className="text-xl font-bold font-mono-num text-emerald-700">
-                        {viewEmployeeModal.employee.remainingLeaveBalance}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {viewEmployeeModal.tab === 'attendance' && (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-right text-xs">
-                    <thead className="bg-slate-100 font-bold">
-                      <tr>
-                        <th className="p-2.5">التاريخ</th>
-                        <th className="p-2.5">حضور</th>
-                        <th className="p-2.5">انصراف</th>
-                        <th className="p-2.5">تأخير</th>
-                        <th className="p-2.5">الحالة</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {attendanceRecords
-                        .filter((r) => r.employeeId === viewEmployeeModal.employee?.id)
-                        .map((r) => (
-                          <tr key={r.id}>
-                            <td className="p-2.5 font-mono-num">{r.date}</td>
-                            <td className="p-2.5 font-mono-num text-emerald-700">{r.checkInTime || '—'}</td>
-                            <td className="p-2.5 font-mono-num text-amber-700">{r.checkOutTime || '—'}</td>
-                            <td className="p-2.5 font-mono-num">{formatSecondsDigital(r.lateSeconds)}</td>
-                            <td className="p-2.5">{r.status}</td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {viewEmployeeModal.tab === 'leaves' && (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-right text-xs">
-                    <thead className="bg-slate-100 font-bold">
-                      <tr>
-                        <th className="p-2.5">نوع الإجازة</th>
-                        <th className="p-2.5">الفترة</th>
-                        <th className="p-2.5">الأيام</th>
-                        <th className="p-2.5">السبب</th>
-                        <th className="p-2.5">الحالة</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {leaveRequests
-                        .filter((l) => l.employeeId === viewEmployeeModal.employee?.id)
-                        .map((l) => (
-                          <tr key={l.id}>
-                            <td className="p-2.5 font-bold">{l.leaveType}</td>
-                            <td className="p-2.5 font-mono-num">{l.startDate} إلى {l.endDate}</td>
-                            <td className="p-2.5 font-bold">{l.daysCount}</td>
-                            <td className="p-2.5">{l.reason}</td>
-                            <td className="p-2.5">{l.status}</td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {viewEmployeeModal.tab === 'excuses' && (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-right text-xs">
-                    <thead className="bg-slate-100 font-bold">
-                      <tr>
-                        <th className="p-2.5">النوع</th>
-                        <th className="p-2.5">التاريخ</th>
-                        <th className="p-2.5">الوقت</th>
-                        <th className="p-2.5">السبب</th>
-                        <th className="p-2.5">الحالة</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {excuseRequests
-                        .filter((e) => e.employeeId === viewEmployeeModal.employee?.id)
-                        .map((e) => (
-                          <tr key={e.id}>
-                            <td className="p-2.5 font-bold">{e.type === 'late' ? 'تأخر' : 'انصراف مبكر'}</td>
-                            <td className="p-2.5 font-mono-num">{e.date}</td>
-                            <td className="p-2.5 font-mono-num">{e.targetTime}</td>
-                            <td className="p-2.5">{e.reason}</td>
-                            <td className="p-2.5">{e.status}</td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
           </div>
         </div>
       )}
